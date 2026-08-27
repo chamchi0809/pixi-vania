@@ -1,0 +1,64 @@
+{
+  "name": "pixi-vania",
+  "version": "0.1.0",
+  "description": "Tilemap level editor and .svlevel runtime for PixiJS v8 + Rapier2D. Auto-tiling, collision layers, entity types, localization.",
+  "keywords": [
+    "pixijs",
+    "pixi",
+    "rapier",
+    "level-editor",
+    "tilemap",
+    "tiled",
+    "ldtk",
+    "2d"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./editor": {
+      "types": "./dist/editor.d.ts",
+      "import": "./dist/editor.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "node --disable-warning=ExperimentalWarning --experimental-strip-types check.ts"
+  },
+  "peerDependencies": {
+    "@dimforge/rapier2d-compat": ">=0.14",
+    "pixi.js": "^8.6.0"
+  },
+  "peerDependenciesMeta": {
+    "@dimforge/rapier2d-compat": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dimforge/rapier2d-compat": "^0.19.0",
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tabler/icons-svelte": "^3.44.0",
+    "@types/node": "^26.1.2",
+    "i-input-svelte": "^0.1.0",
+    "pixi.js": "8.19.0",
+    "svelte": "^5.55.2",
+    "typescript": "6.0.3",
+    "vite": "8.2.0"
+  }
+}

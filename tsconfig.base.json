@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    // Workspace packages resolve to source, so `typecheck` works before anything
+    // has been built. The emitted d.ts still says `pixi-vania`.
+    "paths": {
+      "pixi-vania": ["./packages/lib/src/index.ts"],
+      "pixi-vania/editor": ["./packages/lib/src/editor.ts"],
+      "pixi-vania/vite": ["./packages/lib/src/vite.ts"]
+    },
+    "useDefineForClassFields": true,
+    "noEmit": true
+  }
+}

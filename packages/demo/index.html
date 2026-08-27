@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pixi-vania — editor + runtime demo</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='2' width='5' height='5' fill='%23868686'/><rect x='9' y='9' width='5' height='5' fill='%23f1f3f5'/></svg>"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1a1a22;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #editor {
+        position: fixed;
+        inset: 0;
+      }
+      #play {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: #12121a;
+      }
+      #play.on {
+        display: block;
+      }
+      #play canvas {
+        display: block;
+      }
+      #hint {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        color: #9aa0aa;
+        font-size: 12px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor"></div>
+    <div id="play"><div id="hint">←/→ move · Z jump · Esc back to editor</div></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
