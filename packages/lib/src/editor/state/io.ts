@@ -5,6 +5,7 @@
  */
 
 import { SVLEVEL_FORMAT, type SvLevelProject } from '../../format/types';
+import { downloadProject } from './download';
 
 export interface AssetInfo {
 	path: string;
@@ -65,8 +66,8 @@ export function devServerStore(api = '/__svlevel'): ProjectStore {
 }
 
 /**
- * Read-only backend over plain `fetch`. Saving throws, so the editor falls back to
- * "Export" (download) — the right default for a statically-hosted editor.
+ * Static backend over plain `fetch`. Saving downloads the current project as JSON,
+ * which keeps the normal Save button useful on hosts without a writable backend.
  */
 export function staticStore(projects: string[] = []): ProjectStore {
 	return {
@@ -75,8 +76,8 @@ export function staticStore(projects: string[] = []): ProjectStore {
 			const res = await fetch(path, { cache: 'no-store' });
 			return assertProject(await json(res, 'loadProject'), path);
 		},
-		async save() {
-			throw new Error('read-only backend — use Export to download the project');
+		async save(path, data) {
+			downloadProject(path, data);
 		}
 	};
 }

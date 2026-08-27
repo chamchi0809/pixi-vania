@@ -38,6 +38,7 @@ import {
 	recomputeAutoTiles,
 	renameGroupReferences
 } from './ops';
+import { downloadProject } from './download';
 import { listProjects, loadProject, saveProject } from './io';
 
 export type EditorTool =
@@ -185,15 +186,7 @@ class EditorStore {
 	exportFile(): void {
 		const project = this.snapshotProject();
 		if (!project) return;
-		const url = URL.createObjectURL(
-			new Blob([JSON.stringify(project, null, '\t')], { type: 'application/json' })
-		);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = this.projectPath.split('/').pop() || 'project.svlevel.json';
-		a.click();
-		URL.revokeObjectURL(url);
-		this.status = `Exported ${a.download}`;
+		this.status = `Exported ${downloadProject(this.projectPath, project)}`;
 	}
 
 	/** Open a `.svlevel.json` picked from the user's disk. */

@@ -134,7 +134,7 @@ for (const line of parseScript(entity.fields.Script)) {
 
 ### Storage
 
-The default `devServerStore()` uses the Vite plugin. `staticStore(paths)` is a read-only `fetch` backend. For custom storage, implement `ProjectStore` with `list`, `load`, `save`, and optional asset methods.
+The default `devServerStore()` uses the Vite plugin. `staticStore(paths)` loads with `fetch` and downloads JSON when saved. For custom storage, implement `ProjectStore` with `list`, `load`, `save`, and optional asset methods.
 
 ```ts
 mountEditor(el, { store: staticStore(['/assets/levels/demo.svlevel.json']) });

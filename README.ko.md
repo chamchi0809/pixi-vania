@@ -134,7 +134,7 @@ for (const line of parseScript(entity.fields.Script)) {
 
 ### 저장소
 
-기본 `devServerStore()`는 Vite 플러그인을 사용합니다. `staticStore(paths)`는 `fetch` 기반의 읽기 전용 저장소입니다. 커스텀 저장소를 사용하려면 `list`, `load`, `save`와 선택적인 에셋 메서드를 포함하는 `ProjectStore`를 구현하세요.
+기본 `devServerStore()`는 Vite 플러그인을 사용합니다. `staticStore(paths)`는 `fetch`로 불러오고 저장할 때 JSON을 다운로드합니다. 커스텀 저장소를 사용하려면 `list`, `load`, `save`와 선택적인 에셋 메서드를 포함하는 `ProjectStore`를 구현하세요.
 
 ```ts
 mountEditor(el, { store: staticStore(['/assets/levels/demo.svlevel.json']) });

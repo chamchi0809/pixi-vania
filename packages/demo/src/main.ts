@@ -14,11 +14,13 @@ import {
 	type SvLevel,
 	type SvLevelProject
 } from 'pixi-vania';
-import { mountEditor } from 'pixi-vania/editor';
+import { mountEditor, staticStore } from 'pixi-vania/editor';
 
 const GRAVITY = 18;
 const JUMP = 15;
-const PROJECT = '/assets/levels/demo.svlevel.json';
+const PROJECT = import.meta.env.PROD
+	? new URL('assets/levels/demo.svlevel.json', document.baseURI).href
+	: '/assets/levels/demo.svlevel.json';
 const playEl = document.querySelector<HTMLDivElement>('#play')!;
 
 const keys = new Set<string>();
@@ -263,6 +265,7 @@ addEventListener('keydown', (e) => {
 });
 
 mountEditor(document.querySelector<HTMLDivElement>('#editor')!, {
+	...(import.meta.env.PROD ? { store: staticStore([PROJECT]) } : {}),
 	projectPath: PROJECT,
 	onPlay: (project, levelUid) => void play(project, levelUid)
 });
