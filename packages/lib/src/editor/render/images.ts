@@ -49,10 +49,6 @@ export function ensureImage(src: string, onLoad?: () => void): HTMLImageElement 
  * URL-encoding path segments so names with spaces (e.g. "Dungeon Tile Set.png") work.
  */
 export function tilesetImageUrl(projectDir: string, relPath: string): string {
-	const base = projectDir.endsWith('/') ? projectDir : projectDir + '/';
-	const joined = (base + relPath).replace(/\/+/g, '/');
-	return joined
-		.split('/')
-		.map((seg, i) => (i === 0 || seg === '' ? seg : encodeURIComponent(seg)))
-		.join('/');
+	const baseDir = projectDir.endsWith('/') ? projectDir : projectDir + '/';
+	return new URL(relPath, new URL(baseDir, location.href)).href;
 }

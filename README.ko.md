@@ -1,6 +1,6 @@
 # pixi-vania
 
-[English](README.md) | [한국어](README.ko.md)
+[English](README.md) | [한국어](README.ko.md) | [라이브 데모](https://chamchi0809.github.io/pixi-vania/)
 
 ![pixi-vania editor](docs/img/editor-full.png)
 
