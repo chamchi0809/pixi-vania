@@ -13,10 +13,12 @@
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.19.0",
     "pixi-vania": "workspace:*",
-    "pixi.js": "8.19.0"
+    "pixi.js": "8.19.0",
+    "tweakpane": "^4.0.5"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tweakpane/core": "^2.0.5",
     "svelte": "^5.55.2",
     "typescript": "6.0.3",
     "vite": "8.2.0"

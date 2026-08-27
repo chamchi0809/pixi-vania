@@ -41,11 +41,28 @@
         font-size: 12px;
         pointer-events: none;
       }
+      /* Outside #play, so it stays up in the editor too. Tweakpane fills it.
+         Parked over the editor's canvas column: clear of the 46px toolbar and the
+         312px inspector. Play has the screen to itself, so it moves to the corner. */
+      #panel {
+        position: fixed;
+        top: 58px;
+        right: 324px;
+        width: 260px;
+        z-index: 10;
+      }
+      #play.on ~ #panel {
+        top: 12px;
+        right: 12px;
+      }
     </style>
   </head>
   <body>
     <div id="editor"></div>
-    <div id="play"><div id="hint">←/→ move · Z jump · Esc back to editor</div></div>
+    <div id="play">
+      <div id="hint">←/→ move · Z jump · Esc back to editor</div>
+    </div>
+    <div id="panel"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
