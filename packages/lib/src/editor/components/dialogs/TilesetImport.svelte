@@ -42,6 +42,9 @@
 	let remap = $state(false);
 	let palette = $state<string[]>([]);
 	let remappedUrl = $state('');
+	let remapPending = $state(false);
+	let remapGeneration = 0;
+	let sourceGeneration = 0;
 
 	const cWid = $derived(
 		dims ? Math.max(0, Math.floor((dims.w - padding * 2 + spacing) / (tileGridSize + spacing))) : 0
@@ -62,14 +65,21 @@
 		const src = previewUrl;
 		const pal = palette.map((c) => c);
 		if (!remap || !src || !pal.length) {
+			remapGeneration++;
+			remapPending = false;
 			remappedUrl = '';
 			return;
 		}
-		let stale = false;
+		const generation = ++remapGeneration;
+		remapPending = true;
+		remappedUrl = '';
 		remapImageToPalette(src, pal)
-			.then((u) => !stale && (remappedUrl = u))
-			.catch((e) => !stale && (error = (e as Error).message));
-		return () => (stale = true);
+			.then((url) => {
+				if (generation === remapGeneration) remappedUrl = url;
+			})
+			.catch((e) => generation === remapGeneration && (error = (e as Error).message))
+			.finally(() => generation === remapGeneration && (remapPending = false));
+		return () => { if (generation === remapGeneration) remapGeneration++; };
 	});
 
 	/** Decode an image URL to its pixel dimensions. */
@@ -104,6 +114,7 @@
 	}
 
 	async function chooseAsset(path: string) {
+		const generation = ++sourceGeneration;
 		error = '';
 		const asset = assets.find((a) => a.path === path);
 		if (!asset) return;
@@ -111,15 +122,22 @@
 		previewUrl = asset.path;
 		identifier = baseName(asset.name);
 		try {
-			dims = await readDims(asset.path);
+			const next = await readDims(asset.path);
+			if (generation === sourceGeneration) dims = next;
 		} catch (e) {
+			if (generation !== sourceGeneration) return;
 			error = (e as Error).message;
 			dims = null;
 		}
 	}
 
 	async function chooseUpload(file: File) {
+		const generation = ++sourceGeneration;
 		error = '';
+		if (file.size > 32 * 1024 * 1024) {
+			error = 'Image is larger than the 32 MiB import limit';
+			return;
+		}
 		const dataUrl = await new Promise<string>((resolve, reject) => {
 			const r = new FileReader();
 			r.onload = () => resolve(r.result as string);
@@ -130,8 +148,11 @@
 		previewUrl = dataUrl;
 		identifier = baseName(file.name);
 		try {
-			dims = await readDims(dataUrl);
+			const next = await readDims(dataUrl);
+			if (next.w > 8192 || next.h > 8192) throw new Error('Image dimensions exceed 8192×8192');
+			if (generation === sourceGeneration) dims = next;
 		} catch (e) {
+			if (generation !== sourceGeneration) return;
 			error = (e as Error).message;
 			dims = null;
 		}
@@ -149,6 +170,10 @@
 
 	async function confirm() {
 		if (!project || !source || !dims) return;
+		if (remap && (remapPending || !remappedUrl)) {
+			error = 'Wait for palette remapping to finish';
+			return;
+		}
 		error = '';
 		let relPath: string;
 		try {
@@ -270,13 +295,14 @@
 		</div>
 	{/if}
 
-	{#if error}
+		{#if error}
 		<p class="err">{error}</p>
-	{/if}
+		{/if}
+		{#if remapPending}<p class="dim" role="status">Remapping palette…</p>{/if}
 
 	{#snippet footer()}
 		<button class="btn" onclick={onclose}>Cancel</button>
-		<button class="btn primary" disabled={!source || !dims} onclick={confirm}>Add tileset</button>
+		<button class="btn primary" disabled={!source || !dims || remapPending || (remap && !remappedUrl)} onclick={confirm}>Add tileset</button>
 	{/snippet}
 </Dialog>
 

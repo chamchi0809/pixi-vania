@@ -1,5 +1,4 @@
 /** Side-on mode: gravity, one edge-triggered jump, a capsule body, camera framing the whole level. */
-import { Container, Graphics } from 'pixi.js';
 import type { GameMode } from './game';
 
 /** Capsule radius and half-height in physics units (1 unit == 1 tile). */
@@ -18,9 +17,9 @@ export const platformer: GameMode = {
 	gravity: (t) => t.gravity,
 
 	// A capsule so the body slides over tile seams instead of catching on them.
-	sprite: (ppu) =>
-		new Container().addChild(
-			new Graphics()
+	sprite: (ppu, pixi) =>
+		new pixi.Container().addChild(
+			new pixi.Graphics()
 				.roundRect(-R * ppu, -(HH + R) * ppu, R * 2 * ppu, (HH + R) * 2 * ppu, R * ppu)
 				.fill('#63c74d')
 		),

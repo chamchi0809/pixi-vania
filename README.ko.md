@@ -19,7 +19,8 @@
 npm i pixi-vania pixi.js @dimforge/rapier2d-compat
 ```
 
-렌더링만 필요하다면 Rapier는 설치하지 않아도 됩니다.
+JSON 포맷 도구만 `pixi-vania` 또는 `pixi-vania/format`에서 사용하면 Pixi와 Rapier가 모두
+선택 사항입니다. 런타임은 `pixi-vania/runtime`에서 가져오고 두 peer를 설치합니다.
 
 ## 빠른 시작
 
@@ -49,7 +50,7 @@ export default { plugins: [levelEditor({ staticDir: 'public' })] };
 
 ```ts
 import RAPIER from '@dimforge/rapier2d-compat';
-import { createLevelRuntime } from 'pixi-vania';
+import { createLevelRuntime } from 'pixi-vania/runtime';
 
 await RAPIER.init();
 const world = new RAPIER.World({ x: 0, y: 40 });
@@ -61,6 +62,31 @@ const level = await createLevelRuntime(project, levelUid, {
 	navGrid: true
 });
 ```
+
+기본값으로 보이는 레이어가 실제 참조하는 tileset만 지연 로드합니다. 호출자는 동기/비동기,
+진행률, 취소, 동시성, 캐시, 실패 정책과 커스텀 로더를 모두 선택할 수 있습니다.
+
+```ts
+const controller = new AbortController();
+const level = await createLevelRuntime(project, levelUid, {
+	world,
+	basePath: projectFileUrl,
+	basePathKind: 'project-file',
+	loading: {
+		concurrency: 2,
+		signal: controller.signal,
+		getCached: ({ tileset }) => textureCache.get(tileset.uid),
+		load: ({ url }) => Assets.load(url), // Texture 또는 Promise<Texture>
+		onProgress: ({ loaded, total, status, tileset }) =>
+			showProgress(loaded, total, status, tileset.identifier),
+		onError: (_error, _context) => Texture.EMPTY // 또는 'skip' / 'throw'
+	}
+});
+```
+
+완전 동기 시작은 texture를 미리 준비해 `createLevelRuntimeSync`를 호출합니다. 캐시 전용 선택은
+`loadTilesetTexturesSync`, 비동기 선택은 `loadTilesetTextures`를 사용하며
+`strategy: 'referenced' | 'all'`도 지정할 수 있습니다.
 
 타일 메시, 정적 콜라이더, 엔티티 목록이 생성됩니다. 실제 엔티티 생성은 게임에서 처리합니다.
 
@@ -91,7 +117,8 @@ collider.setCollisionGroups(groupsForLayer(table, 'Enemy'));
 
 ### 타일 콜라이더와 태그
 
-`level.colliders`의 각 항목에는 Rapier 콜라이더와 원본 사각형 정보가 들어 있습니다. 설정이 같은 인접 박스 콜라이더는 하나로 합쳐집니다. 픽셀 형태의 콜라이더는 원본 타일 영역을 벗어나지 않습니다.
+`level.colliders`의 각 항목에는 Rapier 콜라이더와 원본 사각형 정보가 들어 있습니다. 설정이
+같은 박스와 픽셀 마스크 사각형은 타일 경계를 넘어 인접한 경우에도 하나로 합쳐집니다.
 
 ```ts
 for (const { collider, rect } of level.colliders) {
@@ -142,10 +169,21 @@ mountEditor(el, { store: staticStore(['/assets/levels/demo.svlevel.json']) });
 
 ## API 레퍼런스
 
-### `pixi-vania`
+### `pixi-vania`와 `pixi-vania/format`
+
+```ts
+parseProject(input, options)
+validateProject(input)
+assertProject(input)
+computeAutoTiles(options)
+localize(localization, key, locale)
+```
+
+### `pixi-vania/runtime`
 
 ```ts
 createLevelRuntime(project, levelId, options): Promise<LevelRuntime>
+createLevelRuntimeSync(project, levelId, options): LevelRuntime
 
 LevelRuntime {
 	level
@@ -155,10 +193,13 @@ LevelRuntime {
 	navGrid
 	entities
 	pixelsPerUnit
+	stats
 	destroy()
 }
 
-loadTilesetTextures(project, basePath?)
+loadTilesetTextures(project, options)
+loadTilesetTexturesSync(project, options)
+referencedTilesets(project, level)
 buildTileLayers(project, level, textures)
 tileMaskFromTextures(project, textures)
 createLevelBody(world, level, pixelsPerUnit)
@@ -167,20 +208,6 @@ tileColliderRects(project, level, mask?)
 buildNavGrid(project, level, mask?)
 tileBatches(project, layer)
 tileTagIndex(tileset)
-buildCollisionGroups(layers)
-groupsForLayer(table, id)
-interactionGroups(membership, filter?)
-collisionTargetsFor(layers, id)
-cloneDefaultLayers()
-computeAutoTiles(options)
-getEntityType(project, id)
-getEntityTypeDef(project, id)
-defaultEntityFields(project, id)
-localize(localization, key, locale)
-collectLocalizableStrings(project)
-emptyLocalization()
-parseScript(raw)
-serializeScript(lines)
 ```
 
 ### `pixi-vania/editor`
@@ -211,7 +238,14 @@ emptyProject()
 levelEditor({
 	staticDir?: string,       // 기본값: 'public'
 	base?: string,            // 기본값: '/__svlevel'
-	imageExtensions?: string[]
+	imageExtensions?: string[],
+	previewWrites?: boolean,
+	writeToken?: string,
+	uploadDirectories?: string[],
+	allowUploadOverwrite?: boolean,
+	requireRevision?: boolean,
+	backupOnSave?: boolean,
+	maxBodyBytes?: number
 }): Plugin
 ```
 
@@ -219,7 +253,8 @@ levelEditor({
 
 ## 개발
 
-현재 타일 셰이더는 WebGL이 필요합니다. Pixi를 초기화할 때 `preference: 'webgl'`을 지정하세요.
+타일 셰이더는 WebGPU와 WebGL을 모두 지원합니다. `preference: 'webgpu'`를 지정하면 가능한
+환경에서는 WebGPU를 사용하고 그렇지 않으면 Pixi가 WebGL로 폴백합니다.
 
 ```sh
 pnpm i

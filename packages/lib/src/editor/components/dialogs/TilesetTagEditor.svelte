@@ -47,8 +47,14 @@
 	}
 
 	function setTagsEnum(enumId: string) {
-		if (!tileset) return;
-		editor.commit('Set tags enum', () => (tileset.tagsEnumId = enumId || null));
+		if (!tileset || !project) return;
+		const allowed = new Set(getEnum(project, enumId)?.values.map((value) => value.id) ?? []);
+		const dropped = tileset.enumTags.filter((tag) => !allowed.has(tag.enumValueId));
+		if (dropped.length && typeof confirm === 'function' && !confirm(`${dropped.length} tag value(s) do not exist in the new enum and will be removed. Continue?`)) return;
+		editor.commit('Set tags enum', () => {
+			tileset.tagsEnumId = enumId || null;
+			tileset.enumTags = tileset.enumTags.filter((tag) => allowed.has(tag.enumValueId));
+		});
 	}
 
 	function draw() {
@@ -70,7 +76,7 @@
 		ctx.imageSmoothingEnabled = false;
 
 		const url = tilesetImageUrl(projectDir, tileset.relPath);
-		const img = getImage(url) ?? ensureImage(url, () => editor.touch());
+		const img = getImage(url) ?? ensureImage(url, () => editor.redraw());
 		if (img) ctx.drawImage(img, 0, 0, cssW, cssH);
 		else {
 			ctx.fillStyle = '#000';

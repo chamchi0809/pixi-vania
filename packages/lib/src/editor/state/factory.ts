@@ -139,6 +139,12 @@ export function resizeLayerInstanceShifted(
 	if (shiftPxX || shiftPxY) {
 		for (const e of li.entities) e.px = [e.px[0] + shiftPxX, e.px[1] + shiftPxY];
 	}
+	for (const e of li.entities) {
+		e.px = [
+			Math.max(0, Math.min(e.px[0], Math.max(0, maxX - e.width))),
+			Math.max(0, Math.min(e.px[1], Math.max(0, maxY - e.height)))
+		];
+	}
 	li.cWid = cWid;
 	li.cHei = cHei;
 }
@@ -173,8 +179,6 @@ export function makeAutoRule(project: SvLevelProject, size = 3): SvAutoRule {
 		tileYOffset: 0,
 		checker: 'None',
 		tileMode: 'Single',
-		pivotX: 0,
-		pivotY: 0,
 		outOfBoundsValue: null,
 		perlinActive: false,
 		perlinSeed: 0,

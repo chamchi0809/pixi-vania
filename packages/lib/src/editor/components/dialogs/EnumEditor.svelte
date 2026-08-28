@@ -40,7 +40,27 @@
 
 	function deleteEnum(uid: number) {
 		if (!project) return;
-		commit('Delete enum', () => (project.enums = project.enums.filter((e) => e.uid !== uid)));
+		const removed = project.enums.find((e) => e.uid === uid);
+		if (!removed) return;
+		commit('Delete enum', () => {
+			project.enums = project.enums.filter((e) => e.uid !== uid);
+			for (const ts of project.tilesets) if (ts.tagsEnumId === removed.identifier) {
+				ts.tagsEnumId = null;
+				ts.enumTags = [];
+			}
+			for (const field of project.levelFields) if (field.enumId === removed.identifier) {
+				field.enumId = null;
+				field.defaultValue = null;
+				for (const level of project.levels) level.fields[field.identifier] = null;
+			}
+			for (const def of project.entities ?? []) for (const field of def.fields) {
+				if (field.enumId !== removed.identifier) continue;
+				delete field.enumId;
+				field.default = '';
+				for (const level of project.levels) for (const layer of level.layers) if (layer.type === 'Entities')
+					for (const entity of layer.entities) if (entity.type === def.id) entity.fields[field.id] = '';
+			}
+		});
 		if (selectedUid === uid) selectedUid = project.enums[0]?.uid ?? -1;
 	}
 
@@ -60,6 +80,9 @@
 			for (const f of project.levelFields) {
 				if (f.enumId === oldId) f.enumId = newId;
 			}
+			for (const def of project.entities ?? []) for (const field of def.fields) {
+				if (field.enumId === oldId) field.enumId = newId;
+			}
 		});
 	}
 
@@ -78,8 +101,13 @@
 	}
 
 	function deleteValue(idx: number) {
-		if (!selected) return;
-		commit('Delete enum value', () => selected.values.splice(idx, 1));
+		if (!selected || !project) return;
+		const oldId = selected.values[idx]?.id;
+		if (!oldId) return;
+		commit('Delete enum value', () => {
+			selected.values.splice(idx, 1);
+			migrateValueReferences(oldId, undefined);
+		});
 	}
 
 	function renameValue(idx: number, raw: string) {
@@ -102,7 +130,29 @@
 					if (tag.enumValueId === oldId) tag.enumValueId = newId;
 				}
 			}
+			migrateValueReferences(oldId, newId);
 		});
+	}
+
+	function migrateValueReferences(oldId: string, newId: string | undefined) {
+		if (!selected || !project) return;
+		for (const field of project.levelFields) {
+			if (field.type !== 'Enum' || field.enumId !== selected.identifier) continue;
+			if (field.defaultValue === oldId) field.defaultValue = newId ?? null;
+			for (const level of project.levels) {
+				if (level.fields[field.identifier] === oldId) level.fields[field.identifier] = newId ?? null;
+			}
+		}
+		for (const def of project.entities ?? []) for (const field of def.fields) {
+			if (field.type !== 'Enum' || field.enumId !== selected.identifier) continue;
+			if (field.default === oldId) field.default = newId ?? '';
+			for (const level of project.levels) for (const layer of level.layers) if (layer.type === 'Entities') {
+				for (const entity of layer.entities) {
+					if (entity.type === def.id && entity.fields[field.id] === oldId)
+						entity.fields[field.id] = newId ?? field.default;
+				}
+			}
+		}
 	}
 </script>
 

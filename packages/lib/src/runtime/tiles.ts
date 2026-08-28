@@ -5,8 +5,8 @@
  * read as a grid.
  */
 
-import { Container, Geometry, Mesh, Shader, Texture, UniformGroup } from 'pixi.js';
-import { tileBatches, type TileBatch } from './grid';
+import { Container, Geometry, Mesh, Shader, UniformGroup, type Texture } from 'pixi.js';
+import { resolvedTileFlip, tileBatches, type TileBatch } from './grid';
 import {
 	TILE_WARP_DEFAULT,
 	tileIdToSrc,
@@ -31,7 +31,6 @@ out float vAlpha;
 uniform mat3 uProjectionMatrix;
 uniform mat3 uWorldTransformMatrix;
 uniform mat3 uTransformMatrix;
-uniform float uFlipSeed;
 
 void main() {
 	mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
@@ -40,10 +39,7 @@ void main() {
 	vBounds = aBounds;
 	vPx = aPosition;
 	vAlpha = aAlpha;
-	// Decorrelated 0..1 per tile cell; mirror when it lands inside the tile's authored chance band.
-	float hx = fract(sin(dot(aCell, vec2(127.1, 311.7)) + uFlipSeed) * 43758.5453);
-	float hy = fract(sin(dot(aCell, vec2(269.5, 183.3)) + uFlipSeed) * 43758.5453);
-	vFlip = vec3(step(1.0 - aFlip.x, hx), step(1.0 - aFlip.y, hy), aFlip.z);
+	vFlip = aFlip;
 }
 `;
 
@@ -93,12 +89,96 @@ void main() {
 }
 `;
 
+/** WebGPU equivalent of the WebGL shader above. Resource names intentionally match both paths. */
+const WGSL = /* wgsl */ `
+struct GlobalUniforms {
+	uProjectionMatrix: mat3x3<f32>,
+	uWorldTransformMatrix: mat3x3<f32>,
+	uWorldColorAlpha: vec4<f32>,
+	uResolution: vec2<f32>,
+}
+
+struct LocalUniforms {
+	uTransformMatrix: mat3x3<f32>,
+	uColor: vec4<f32>,
+	uRound: f32,
+}
+
+struct TileUniforms {
+	uTexel: vec2<f32>,
+	uNoiseFreq: f32,
+}
+
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+@group(2) @binding(0) var uTexture: texture_2d<f32>;
+@group(2) @binding(1) var uSampler: sampler;
+@group(2) @binding(2) var<uniform> tileUniforms: TileUniforms;
+
+struct VertexOutput {
+	@builtin(position) position: vec4<f32>,
+	@location(0) uv: vec2<f32>,
+	@location(1) bounds: vec4<f32>,
+	@location(2) flip: vec3<f32>,
+	@location(3) px: vec2<f32>,
+	@location(4) alpha: f32,
+}
+
+@vertex
+fn mainVertex(
+	@location(0) aPosition: vec2<f32>,
+	@location(1) aUV: vec2<f32>,
+	@location(2) aBounds: vec4<f32>,
+	@location(3) aFlip: vec3<f32>,
+	@location(4) aCell: vec2<f32>,
+	@location(5) aAlpha: f32,
+) -> VertexOutput {
+	let mvp = globalUniforms.uProjectionMatrix * globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+	let projected = mvp * vec3<f32>(aPosition, 1.0);
+	return VertexOutput(
+		vec4<f32>(projected.xy, 0.0, 1.0),
+		aUV,
+		aBounds,
+		aFlip,
+		aPosition,
+		aAlpha,
+	);
+}
+
+fn hash21(p: vec2<f32>) -> f32 {
+	return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+fn valueNoise(p: vec2<f32>) -> f32 {
+	let i = floor(p);
+	let f = fract(p);
+	let u = f * f * (vec2<f32>(3.0) - 2.0 * f);
+	return mix(
+		mix(hash21(i), hash21(i + vec2<f32>(1.0, 0.0)), u.x),
+		mix(hash21(i + vec2<f32>(0.0, 1.0)), hash21(i + vec2<f32>(1.0, 1.0)), u.x),
+		u.y,
+	) * 2.0 - 1.0;
+}
+
+@fragment
+fn mainFragment(input: VertexOutput) -> @location(0) vec4<f32> {
+	var uv = vec2<f32>(
+		mix(input.uv.x, input.bounds.x + input.bounds.z - input.uv.x, input.flip.x),
+		mix(input.uv.y, input.bounds.y + input.bounds.w - input.uv.y, input.flip.y),
+	);
+	let n = floor(input.px) * tileUniforms.uNoiseFreq;
+	uv += floor(vec2<f32>(valueNoise(n), valueNoise(n + vec2<f32>(19.7))) * input.flip.z + vec2<f32>(0.5)) * tileUniforms.uTexel;
+	uv = clamp(uv, input.bounds.xy + tileUniforms.uTexel * 0.25, input.bounds.zw - tileUniforms.uTexel * 0.25);
+	let tex = textureSample(uTexture, uSampler, uv);
+	if (tex.a < 0.01) { discard; }
+	return tex * localUniforms.uColor * globalUniforms.uWorldColorAlpha * input.alpha;
+}
+`;
+
 const num = (m: Map<number, number>, id: number, fallback: number): number => m.get(id) ?? fallback;
 
 function batchGeometry(batch: TileBatch, tileSize: number): Geometry {
 	const { tileset, tiles } = batch;
-	const chanceX = new Map((tileset.tileFlips ?? []).map((f) => [f.tileId, f.chanceX]));
-	const chanceY = new Map((tileset.tileFlips ?? []).map((f) => [f.tileId, f.chanceY]));
 	const warps = new Map((tileset.tileWarps ?? []).map((w) => [w.tileId, w.warp]));
 
 	const pos: number[] = [];
@@ -118,19 +198,16 @@ function batchGeometry(batch: TileBatch, tileSize: number): Geometry {
 		const u1 = (sx + g) / tileset.pxWid;
 		const v1 = (sy + g) / tileset.pxHei;
 		// Authored per-tile flip (`t.f` bit 0 = X, bit 1 = Y) swaps the quad's own UV corners.
-		const [a0, a1] = t.f & 1 ? [u1, u0] : [u0, u1];
-		const [b0, b1] = t.f & 2 ? [v1, v0] : [v0, v1];
+		const finalFlip = resolvedTileFlip(tileset, t, tileSize);
+		const [a0, a1] = finalFlip & 1 ? [u1, u0] : [u0, u1];
+		const [b0, b1] = finalFlip & 2 ? [v1, v0] : [v0, v1];
 
 		const base = pos.length / 2;
 		pos.push(x, y, x + tileSize, y, x + tileSize, y + tileSize, x, y + tileSize);
 		uv.push(a0, b0, a1, b0, a1, b1, a0, b1);
 		const cx = Math.floor(x / tileSize);
 		const cy = Math.floor(y / tileSize);
-		const f: [number, number, number] = [
-			num(chanceX, t.t, 0),
-			num(chanceY, t.t, 0),
-			num(warps, t.t, TILE_WARP_DEFAULT)
-		];
+		const f: [number, number, number] = [0, 0, num(warps, t.t, TILE_WARP_DEFAULT)];
 		for (let i = 0; i < 4; i++) {
 			bounds.push(u0, v0, u1, v1);
 			flip.push(f[0], f[1], f[2]);
@@ -160,12 +237,15 @@ function batchMesh(batch: TileBatch, tileSize: number, texture: Texture): Mesh<G
 	texture.source.scaleMode = 'nearest';
 	const shader = Shader.from({
 		gl: { vertex: VERTEX, fragment: FRAGMENT },
+		gpu: {
+			vertex: { source: WGSL, entryPoint: 'mainVertex' },
+			fragment: { source: WGSL, entryPoint: 'mainFragment' }
+		},
 		resources: {
 			uTexture: texture.source,
 			uSampler: texture.source.style,
 			tileUniforms: new UniformGroup({
 				uTexel: { value: [1 / batch.tileset.pxWid, 1 / batch.tileset.pxHei], type: 'vec2<f32>' },
-				uFlipSeed: { value: batch.tileset.flipSeed ?? 0, type: 'f32' },
 				uNoiseFreq: { value: TILE_NOISE_FREQ, type: 'f32' }
 			})
 		}

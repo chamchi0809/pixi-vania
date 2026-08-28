@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { onMount } from 'svelte';
 	import { fade, scale } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { tooltip } from '../common/tooltip';
@@ -18,13 +19,65 @@
 		footer?: Snippet;
 		width?: number;
 	} = $props();
+	let dialogEl = $state<HTMLDivElement>();
+	const titleId = `sv-dialog-${nextDialogId()}`;
+
+	const focusable = () =>
+		[...(dialogEl?.querySelectorAll<HTMLElement>(
+			'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+		) ?? [])].filter((element) => !element.hidden && element.getClientRects().length > 0);
 
 	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') onclose();
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			onclose();
+		} else if (e.key === 'Tab') {
+			const items = focusable();
+			if (!items.length) return e.preventDefault();
+			const first = items[0]!;
+			const last = items.at(-1)!;
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		}
 	}
 
 	// Svelte transitions are JS-driven, so the CSS reduced-motion override can't reach them.
 	const ms = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 160;
+
+	onMount(() => {
+		const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const closestEditor = dialogEl?.closest('.editor');
+		const editorRoot = closestEditor instanceof HTMLElement ? closestEditor : null;
+		const overlay = dialogEl?.parentElement;
+		const inerted: HTMLElement[] = [];
+		for (const child of editorRoot?.children ?? []) {
+			if (child !== overlay && child instanceof HTMLElement && !child.inert) {
+				child.inert = true;
+				inerted.push(child);
+			}
+		}
+		// Also exclude host UI outside the editor mount (for example the demo's Tweakpane overlay)
+		// from pointer and keyboard navigation while this modal is open.
+		let bodyBranch: HTMLElement | null = editorRoot;
+		while (bodyBranch?.parentElement && bodyBranch.parentElement !== document.body)
+			bodyBranch = bodyBranch.parentElement;
+		for (const child of document.body.children) {
+			if (child !== bodyBranch && child instanceof HTMLElement && !child.inert) {
+				child.inert = true;
+				inerted.push(child);
+			}
+		}
+		queueMicrotask(() => (focusable()[0] ?? dialogEl)?.focus());
+		return () => {
+			for (const child of inerted) child.inert = false;
+			queueMicrotask(() => previous?.isConnected && previous.focus());
+		};
+	});
 </script>
 
 <svelte:window {onkeydown} />
@@ -38,16 +91,18 @@
 	}}
 >
 	<div
+		bind:this={dialogEl}
 		class="dialog"
 		style="width:{width}px"
 		role="dialog"
 		aria-modal="true"
-		aria-label={title}
+		aria-labelledby={titleId}
+		tabindex="-1"
 		transition:scale={{ duration: ms, start: 0.96, opacity: 0, easing: cubicOut }}
 	>
 		<header>
-			<span class="title">{title}</span>
-			<button class="x" use:tooltip={'Close (Esc)'} onclick={onclose}>
+			<span class="title" id={titleId}>{title}</span>
+			<button class="x" aria-label="Close {title}" use:tooltip={'Close (Esc)'} onclick={onclose}>
 				<IconX size={16} />
 			</button>
 		</header>
@@ -67,7 +122,7 @@
 		background: rgba(0, 0, 0, 0.55);
 		display: grid;
 		place-items: center;
-		z-index: 100;
+		z-index: 10000;
 	}
 	.dialog {
 		max-width: 92vw;
@@ -122,3 +177,10 @@
 		border-top: 1px solid var(--border, #3b405e);
 	}
 </style>
+
+<script lang="ts" module>
+	let dialogSequence = 0;
+	function nextDialogId() {
+		return ++dialogSequence;
+	}
+</script>

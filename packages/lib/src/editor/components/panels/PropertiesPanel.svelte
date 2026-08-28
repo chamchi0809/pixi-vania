@@ -113,6 +113,22 @@
 				onchange={(c) => set('Set level color', () => (level.bgColor = c))}
 			/>
 		</div>
+		{#if project?.levelFields.length}
+			<h4>Level fields</h4>
+			<div class="grid">
+				{#each project.levelFields as field (field.uid)}
+					<span class="lbl">{field.identifier}</span>
+					<FieldInput
+						type={field.type}
+						enumId={field.enumId}
+						min={field.min ?? undefined}
+						max={field.max ?? undefined}
+						value={level.fields[field.identifier] ?? field.defaultValue}
+						onchange={(value) => set('Edit level field', () => (level.fields[field.identifier] = value))}
+					/>
+				{/each}
+			</div>
+		{/if}
 	</Panel>
 {/if}
 
@@ -172,6 +188,7 @@
 
 {#if selection && selEntityDef}
 	{@const e = selection.entity}
+	{@const currentLevel = level!}
 	<Panel title={selEntityDef.name} grow>
 		{#snippet actions()}
 			<button class="del" onclick={() => editor.deleteSelectedEntities()}>Delete</button>
@@ -181,12 +198,16 @@
 			<NumberInput
 				int
 				value={e.px[0]}
+				min={-selection.layer.pxOffsetX}
+				max={currentLevel.pxWid - selection.layer.pxOffsetX - e.width}
 				onchange={(v) => set('Move entity', () => (e.px = [v, e.px[1]]))}
 			/>
 			<span class="lbl">Y</span>
 			<NumberInput
 				int
 				value={e.px[1]}
+				min={-selection.layer.pxOffsetY}
+				max={currentLevel.pxHei - selection.layer.pxOffsetY - e.height}
 				onchange={(v) => set('Move entity', () => (e.px = [e.px[0], v]))}
 			/>
 			{#if selEntityDef.resizableX}
@@ -195,6 +216,7 @@
 					int
 					value={e.width}
 					min={1}
+					max={currentLevel.pxWid - selection.layer.pxOffsetX - e.px[0]}
 					onchange={(v) => set('Resize entity', () => (e.width = v))}
 				/>
 			{/if}
@@ -204,6 +226,7 @@
 					int
 					value={e.height}
 					min={1}
+					max={currentLevel.pxHei - selection.layer.pxOffsetY - e.px[1]}
 					onchange={(v) => set('Resize entity', () => (e.height = v))}
 				/>
 			{/if}
@@ -222,6 +245,7 @@
 							min={f.min}
 							max={f.max}
 							value={e.fields[f.id]}
+							label={f.id}
 							onchange={(v: SvFieldValue) => set('Edit field', () => (e.fields[f.id] = v))}
 						/>
 					{/if}

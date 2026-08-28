@@ -30,8 +30,6 @@ const rule = (uid: number, pattern: string[], tileIds: number[], breakOnMatch = 
 	tileYOffset: 0,
 	checker: 'None',
 	tileMode: 'Single',
-	pivotX: 0,
-	pivotY: 0,
 	outOfBoundsValue: null,
 	perlinActive: false,
 	perlinSeed: 0,
@@ -67,7 +65,7 @@ const group = (uid: number, tilesetDefUid: number, rules: SvAutoRule[]): SvAutoR
 	assert.strictEqual(batches[1]!.tiles[0]!.t, 5);
 }
 
-// 2) breakOnMatch is shared ACROSS groups/tilesets: group 1 blocks group 2 on the same cell.
+// 2) breakOnMatch is group-local: independent groups may both emit on the same cell.
 {
 	const batches = computeAutoTiles({
 		grid: ['a'],
@@ -80,8 +78,20 @@ const group = (uid: number, tilesetDefUid: number, rules: SvAutoRule[]): SvAutoR
 			group(2, 200, [rule(11, [ANYTHING], [9], true)])
 		]
 	});
-	assert.strictEqual(batches.length, 1);
+	assert.strictEqual(batches.length, 2);
 	assert.strictEqual(batches[0]!.tilesetDefUid, 100);
+	assert.strictEqual(batches[1]!.tilesetDefUid, 200);
+}
+
+// 5) chance 0 never fires, including the hash's exact-zero cell/seed boundary.
+{
+	const never = rule(0, [ANYTHING], [7]);
+	never.chance = 0;
+	const batches = computeAutoTiles({
+		grid: ['a'], cWid: 1, cHei: 1, gridSize: 16, tilesets,
+		groups: [group(0, 100, [never])], seed: 0
+	});
+	assert.strictEqual(batches.length, 0);
 }
 
 // 3) Group whose tileset is missing from the map emits nothing.

@@ -176,15 +176,13 @@ function passesChecker(rule: SvAutoRule, cx: number, cy: number): boolean {
 
 /**
  * Compute auto-tiles for one IdGrid/AutoLayer, split into one batch per group tileset (insertion
- * order = group order, so later groups draw on top). `breakOnMatch` is shared across ALL groups
- * regardless of tileset, exactly as the single-batch engine did.
+ * order = group order, so later groups draw on top). `breakOnMatch` only stops later rules in the
+ * same group, matching the format contract.
  */
 export function computeAutoTiles(opts: ComputeAutoTilesOptions): SvAutoTileBatch[] {
 	const { grid, cWid, cHei, groups, gridSize, tilesets, seed = 0 } = opts;
 	// Per-tileset tile lists; insertion order preserved by Map.
 	const batches = new Map<number, SvTile[]>();
-	// Cells where a `breakOnMatch` rule already fired -> blocked from further rules.
-	const stopped = new Uint8Array(cWid * cHei);
 
 	for (const group of groups) {
 		if (!group.active) continue;
@@ -193,6 +191,8 @@ export function computeAutoTiles(opts: ComputeAutoTilesOptions): SvAutoTileBatch
 		if (tsUid == null || !tileset) continue;
 		let tiles = batches.get(tsUid);
 		if (!tiles) batches.set(tsUid, (tiles = []));
+		// A group is an independent rule stack. Other groups may still emit a tile at this cell.
+		const stopped = new Uint8Array(cWid * cHei);
 		for (const rule of group.rules) {
 			if (!rule.active || rule.tileIds.length === 0) continue;
 			const variants = flipVariants(rule);
@@ -213,10 +213,10 @@ export function computeAutoTiles(opts: ComputeAutoTilesOptions): SvAutoTileBatch
 							break;
 						}
 					}
-					if (!matched) continue;
+					if (!matched || rule.chance <= 0) continue;
 
 					// Probabilistic gates.
-					if (rule.chance < 1 && rand01(cx, cy, rule.uid ^ seed) > rule.chance) continue;
+					if (rule.chance < 1 && rand01(cx, cy, rule.uid ^ seed) >= rule.chance) continue;
 					if (rule.perlinActive) {
 						const n = fractalNoise(
 							cx,

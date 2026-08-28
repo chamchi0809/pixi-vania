@@ -8,6 +8,7 @@
 	import type {
 		EntityRenderMode,
 		SvEntityFieldDef,
+		SvEntityInstance,
 		SvEntityTypeDef,
 		SvFieldType
 	} from '../../../format/types';
@@ -68,6 +69,9 @@
 		edit('Delete entity type', (list) => {
 			const i = list.findIndex((t) => t.id === id);
 			if (i >= 0) list.splice(i, 1);
+			for (const level of project!.levels) for (const layer of level.layers) {
+				if (layer.type === 'Entities') layer.entities = layer.entities.filter((entity) => entity.type !== id);
+			}
 		});
 	}
 
@@ -100,17 +104,72 @@
 		let id = 'Field';
 		let n = 2;
 		while (def.fields.some((f) => f.id === id)) id = `Field${n++}`;
-		edit('Add entity field', () => def.fields.push({ id, type: 'String', default: '' }));
+		edit('Add entity field', () => {
+			def.fields.push({ id, type: 'String', default: '' });
+			visitInstances(def.id, (entity) => (entity.fields[id] = ''));
+		});
+	}
+
+	function visitInstances(typeId: string, fn: (entity: SvEntityInstance) => void) {
+		for (const level of project?.levels ?? []) for (const layer of level.layers) {
+			if (layer.type === 'Entities') for (const entity of layer.entities) if (entity.type === typeId) fn(entity);
+		}
+	}
+
+	function renameField(def: SvEntityTypeDef, field: SvEntityFieldDef, raw: string) {
+		const next = raw.trim();
+		if (!next || next === field.id || def.fields.some((candidate) => candidate !== field && candidate.id === next)) return;
+		const previous = field.id;
+		edit('Rename field', () => {
+			field.id = next;
+			visitInstances(def.id, (entity) => {
+				if (Object.hasOwn(entity.fields, previous)) entity.fields[next] = entity.fields[previous];
+				delete entity.fields[previous];
+			});
+		});
+	}
+
+	function deleteField(def: SvEntityTypeDef, field: SvEntityFieldDef) {
+		edit('Delete field', () => {
+			def.fields = def.fields.filter((candidate) => candidate !== field);
+			visitInstances(def.id, (entity) => delete entity.fields[field.id]);
+		});
 	}
 
 	/** Field default has to follow its type, or Properties renders garbage. */
-	function setFieldType(field: SvEntityFieldDef, type: SvFieldType) {
+	function setFieldType(def: SvEntityTypeDef, field: SvEntityFieldDef, type: SvFieldType) {
+		if (field.type === type) return;
 		edit('Set field type', () => {
 			field.type = type;
 			field.default = defaultFor(type);
+			visitInstances(def.id, (entity) => {
+				entity.fields[field.id] = convertValue(entity.fields[field.id], type, field.default);
+			});
 			if (!LOCALIZABLE.has(type)) delete field.localized;
 			if (type !== 'Enum') delete field.enumId;
 		});
+	}
+
+	function setFieldEnum(def: SvEntityTypeDef, field: SvEntityFieldDef, enumId: string) {
+		const selectedEnum = project?.enums.find((item) => item.identifier === enumId);
+		const fallback = selectedEnum?.values[0]?.id ?? '';
+		edit('Set enum', () => {
+			if (enumId) field.enumId = enumId;
+			else delete field.enumId;
+			if (!selectedEnum?.values.some((value) => value.id === field.default)) field.default = fallback;
+			visitInstances(def.id, (entity) => {
+				if (!selectedEnum?.values.some((value) => value.id === entity.fields[field.id])) entity.fields[field.id] = fallback;
+			});
+		});
+	}
+
+	function convertValue(value: unknown, type: SvFieldType, fallback: unknown): unknown {
+		if (type === 'Int') return Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : fallback;
+		if (type === 'Float') return Number.isFinite(Number(value)) ? Number(value) : fallback;
+		if (type === 'Bool') return typeof value === 'string' ? value === 'true' : Boolean(value);
+		if (type === 'Point') return value && typeof value === 'object' ? value : null;
+		if (type === 'Dialogue') return typeof value === 'string' && value.startsWith('[') ? value : '[]';
+		return value == null ? fallback : String(value);
 	}
 
 	function defaultFor(type: SvFieldType): unknown {
@@ -247,13 +306,13 @@
 								<td>
 									<input
 										value={f.id}
-										onchange={(e) => edit('Rename field', () => (f.id = e.currentTarget.value))}
+										onchange={(e) => renameField(def, f, e.currentTarget.value)}
 									/>
 								</td>
 								<td>
 									<select
 										value={f.type}
-										onchange={(e) => setFieldType(f, e.currentTarget.value as SvFieldType)}
+										onchange={(e) => setFieldType(def, f, e.currentTarget.value as SvFieldType)}
 									>
 										{#each FIELD_TYPES as t (t)}<option value={t}>{t}</option>{/each}
 									</select>
@@ -289,8 +348,7 @@
 									{#if f.type === 'Enum'}
 										<select
 											value={f.enumId ?? ''}
-											onchange={(e) =>
-												edit('Set enum', () => (f.enumId = e.currentTarget.value || undefined))}
+												onchange={(e) => setFieldEnum(def, f, e.currentTarget.value)}
 										>
 											<option value="">—</option>
 											{#each project?.enums ?? [] as en (en.uid)}
@@ -318,7 +376,7 @@
 									<button
 										class="icon"
 										use:tooltip={'Delete field'}
-										onclick={() => edit('Delete field', () => def.fields.splice(i, 1))}
+										onclick={() => deleteField(def, f)}
 									>
 										<IconTrash size={13} />
 									</button>

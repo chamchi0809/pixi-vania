@@ -15,6 +15,7 @@
 		options,
 		min,
 		max,
+		label = 'Field color',
 		onchange
 	}: {
 		type: SvFieldType;
@@ -24,6 +25,7 @@
 		options?: string[];
 		min?: number | null;
 		max?: number | null;
+		label?: string;
 		onchange: (v: SvFieldValue) => void;
 	} = $props();
 
@@ -64,7 +66,7 @@
 {:else if type === 'Color'}
 	<ColorInput
 		value={typeof value === 'string' && value ? value : '#ffffff'}
-		label={name}
+		{label}
 		onchange={(c) => onchange(c)}
 	/>
 {:else if type === 'MultiLines'}

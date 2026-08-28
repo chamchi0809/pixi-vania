@@ -6,9 +6,10 @@
 import { mount, unmount } from 'svelte';
 import EditorShell from './components/EditorShell.svelte';
 import { editor } from './state/editorStore.svelte';
-import { setProjectStore, type ProjectStore } from './state/io';
+import { devServerStore, setProjectStore, type ProjectStore } from './state/io';
 import { emptyProject } from './state/factory';
 import type { SvLevelProject } from '../format/types';
+import { clearImageCache } from './render/images';
 
 export interface EditorOptions {
 	/** Where projects load/save from. Default: the dev-server middleware of `pixi-vania/vite`. */
@@ -25,8 +26,9 @@ export interface EditorHandle {
 	/** Detached copy of the live document, safe to hand to `createLevelRuntime`. */
 	getProject(): SvLevelProject | null;
 	open(project: SvLevelProject, path?: string): void;
-	load(path?: string): Promise<void>;
+	load(path?: string): Promise<boolean>;
 	save(): Promise<void>;
+	isDirty(): boolean;
 	destroy(): void;
 }
 
@@ -35,7 +37,9 @@ export interface EditorHandle {
  * need the store passed through context instead.
  */
 export function mountEditor(target: HTMLElement, opts: EditorOptions = {}): EditorHandle {
-	if (opts.store) setProjectStore(opts.store);
+	editor.reset();
+	clearImageCache();
+	setProjectStore(opts.store ?? devServerStore());
 	if (opts.project) editor.open(opts.project, opts.projectPath ?? '');
 	else if (opts.projectPath) editor.projectPath = opts.projectPath;
 	else if (!editor.project) editor.open(emptyProject());
@@ -50,6 +54,12 @@ export function mountEditor(target: HTMLElement, opts: EditorOptions = {}): Edit
 		open: (project, path) => editor.open(project, path),
 		load: (path) => editor.load(path),
 		save: () => editor.save(),
-		destroy: () => void unmount(app)
+		isDirty: () => editor.dirty,
+		destroy: () => {
+			void unmount(app);
+			editor.reset();
+			clearImageCache();
+			setProjectStore(devServerStore());
+		}
 	};
 }

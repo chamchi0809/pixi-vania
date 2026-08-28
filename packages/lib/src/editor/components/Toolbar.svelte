@@ -39,6 +39,7 @@
 				| 'import'
 				| 'localization'
 				| 'entities'
+				| 'levelFields'
 		) => void;
 		/** Absent when the host wired no play handler. */
 		onplay?: () => void;
@@ -64,6 +65,14 @@
 	];
 
 	const zoomPct = $derived(Math.round(editor.camera.zoom * 100));
+	const saveLabel = $derived.by(() => {
+		if (!editor.projectPath.endsWith('.svlevel.json')) return 'Save As';
+		return editor.dirty ? 'Save' : 'Saved';
+	});
+
+	function toolLabel(tool: (typeof tools)[number]): string {
+		return tool.key ? `${tool.label} (${tool.key})` : tool.label;
+	}
 </script>
 
 <header class="toolbar">
@@ -74,8 +83,9 @@
 			{@const Icon = t.icon}
 			<button
 				class="tool"
+				aria-label={toolLabel(t)}
 				class:active={editor.tool === t.id}
-				use:tooltip={`${t.label}${t.key ? ` (${t.key})` : ''}`}
+				use:tooltip={toolLabel(t)}
 				onclick={() => editor.setTool(t.id)}
 			>
 				<Icon size={16} />
@@ -84,35 +94,35 @@
 	</div>
 
 	<div class="group">
-		<button class="btn" disabled={!editor.canUndo} use:tooltip={'Undo (Ctrl/Cmd+Z)'} onclick={() => editor.undo()}>
+		<button class="btn" aria-label="Undo" disabled={!editor.canUndo} use:tooltip={'Undo (Ctrl/Cmd+Z)'} onclick={() => editor.undo()}>
 			<IconArrowBackUp size={16} />
 		</button>
-		<button class="btn" disabled={!editor.canRedo} use:tooltip={'Redo (Ctrl/Cmd+Shift+Z)'} onclick={() => editor.redo()}>
+		<button class="btn" aria-label="Redo" disabled={!editor.canRedo} use:tooltip={'Redo (Ctrl/Cmd+Shift+Z)'} onclick={() => editor.redo()}>
 			<IconArrowForwardUp size={16} />
 		</button>
 	</div>
 
 	<div class="group">
-		<button class="btn" use:tooltip={'Frame level (F)'} onclick={onframe}>
+		<button class="btn" aria-label="Frame level" use:tooltip={'Frame level (F)'} onclick={onframe}>
 			<IconFocusCentered size={16} />
 		</button>
-		<button class="btn" class:active={editor.showGrid} use:tooltip={'Toggle grid'} onclick={() => (editor.showGrid = !editor.showGrid)}>
+		<button class="btn" aria-label="Toggle grid" class:active={editor.showGrid} use:tooltip={'Toggle grid'} onclick={() => (editor.showGrid = !editor.showGrid)}>
 			<IconGridDots size={16} />
 		</button>
-		<button class="btn" class:active={editor.dimInactiveLayers} use:tooltip={'Dim inactive layers'} onclick={() => (editor.dimInactiveLayers = !editor.dimInactiveLayers)}>
+		<button class="btn" aria-label="Dim inactive layers" class:active={editor.dimInactiveLayers} use:tooltip={'Dim inactive layers'} onclick={() => (editor.dimInactiveLayers = !editor.dimInactiveLayers)}>
 			<IconStack2 size={16} />
 		</button>
 	</div>
 
 	{#if editor.activeLayerDef?.type === 'Tiles'}
 		<div class="group flips">
-			<button class="btn" class:active={(editor.brushFlip & 1) === 1} use:tooltip={'Flip brush X (X)'} onclick={() => (editor.brushFlip = (editor.brushFlip ^ 1) as 0 | 1 | 2 | 3)}>
+			<button class="btn" aria-label="Flip brush horizontally" class:active={(editor.brushFlip & 1) === 1} use:tooltip={'Flip brush X (X)'} onclick={() => (editor.brushFlip = (editor.brushFlip ^ 1) as 0 | 1 | 2 | 3)}>
 				<IconFlipHorizontal size={16} />
 			</button>
-			<button class="btn" class:active={(editor.brushFlip & 2) === 2} use:tooltip={'Flip brush Y'} onclick={() => (editor.brushFlip = (editor.brushFlip ^ 2) as 0 | 1 | 2 | 3)}>
+			<button class="btn" aria-label="Flip brush vertically" class:active={(editor.brushFlip & 2) === 2} use:tooltip={'Flip brush Y'} onclick={() => (editor.brushFlip = (editor.brushFlip ^ 2) as 0 | 1 | 2 | 3)}>
 				<IconFlipVertical size={16} />
 			</button>
-			<button class="btn" class:active={editor.brushRandomMode} use:tooltip={'Random brush — stamp one random tile from the selection (T)'} onclick={() => (editor.brushRandomMode = !editor.brushRandomMode)}>
+			<button class="btn" aria-label="Toggle random brush" class:active={editor.brushRandomMode} use:tooltip={'Random brush — stamp one random tile from the selection (T)'} onclick={() => (editor.brushRandomMode = !editor.brushRandomMode)}>
 				<IconDice3 size={16} />
 			</button>
 		</div>
@@ -126,14 +136,38 @@
 		<button class="btn wide" use:tooltip={'Per-tile random flip'} onclick={() => onopendialog('flip')}>Flip</button>
 		<button class="btn wide" use:tooltip={'Edit localization table'} onclick={() => onopendialog('localization')}>Locale</button>
 		<button class="btn wide" use:tooltip={'Edit entity types'} onclick={() => onopendialog('entities')}>Entities</button>
+		<button class="btn wide" use:tooltip={'Edit level field definitions'} onclick={() => onopendialog('levelFields')}>Level fields</button>
 		<button class="btn wide" use:tooltip={'Import a tileset image'} onclick={() => onopendialog('import')}>+Tileset</button>
 	</div>
 
+	<div class="group project-files">
+		<button class="btn wide" onclick={() => editor.newProject()}>New</button>
+		<select
+			aria-label="Open project"
+			value=""
+			onchange={(event) => {
+				const path = event.currentTarget.value;
+				if (path) void editor.load(path);
+				event.currentTarget.value = '';
+			}}
+		>
+			<option value="">Open…</option>
+			{#each editor.availableProjects as path (path)}<option value={path}>{path}</option>{/each}
+		</select>
+		<input
+			class="path"
+			aria-label="Save As project path"
+			value={editor.projectPath}
+			placeholder="/assets/levels/name.svlevel.json"
+			onchange={(event) => (editor.projectPath = event.currentTarget.value.trim())}
+		/>
+	</div>
+
 	<div class="group">
-		<button class="btn" use:tooltip={'Import a .svlevel.json'} onclick={() => fileEl.click()}>
+		<button class="btn" aria-label="Import project" use:tooltip={'Import a .svlevel.json'} onclick={() => fileEl.click()}>
 			<IconUpload size={16} />
 		</button>
-		<button class="btn" use:tooltip={'Export (download) the project'} onclick={() => editor.exportFile()}>
+		<button class="btn" aria-label="Export project" use:tooltip={'Export (download) the project'} onclick={() => editor.exportFile()}>
 			<IconDownload size={16} />
 		</button>
 		<input bind:this={fileEl} type="file" accept=".json,application/json" hidden onchange={pickFile} />
@@ -148,14 +182,14 @@
 	</div>
 
 	{#if onplay}
-		<button class="play" onclick={onplay} use:tooltip={'Play the current level (P)'}>
+		<button class="play" aria-label="Play current level" onclick={onplay} use:tooltip={'Play the current level (P)'}>
 			<IconPlayerPlay size={14} /> Play
 		</button>
 	{/if}
 
-	<button class="save" class:dirty={editor.dirty} onclick={() => editor.save()} use:tooltip={'Save (Ctrl/Cmd+S)'}>
+	<button class="save" aria-label="Save project" class:dirty={editor.dirty} onclick={() => editor.save()} use:tooltip={'Save (Ctrl/Cmd+S)'}>
 		<IconDeviceFloppy size={14} />
-		{editor.dirty ? 'Save' : 'Saved'}
+		{saveLabel}
 	</button>
 </header>
 
@@ -169,6 +203,8 @@
 		background: var(--panel-2);
 		border-bottom: 1px solid var(--border);
 		user-select: none;
+		overflow-x: auto;
+		overflow-y: hidden;
 	}
 	.brand {
 		font-weight: 700;
@@ -217,6 +253,17 @@
 		padding: 0 9px;
 		font-size: 11px;
 		font-weight: 600;
+	}
+	.project-files select { max-width: 110px; }
+	.path {
+		width: 190px;
+		height: 28px;
+		padding: 0 7px;
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--panel);
+		color: var(--text);
+		font: inherit;
 	}
 	.spacer {
 		flex: 1;

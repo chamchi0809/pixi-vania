@@ -14,17 +14,24 @@ const tileset = {
 	padding: 0,
 	cWid: 1,
 	cHei: 1,
-	enumTags: [{ enumValueId: 'spike', tileIds: [3] }],
+	enumTags: [
+		{ enumValueId: 'spike', tileIds: [3] },
+		{ enumValueId: 'a,b', tileIds: [4] },
+		{ enumValueId: 'a', tileIds: [5] },
+		{ enumValueId: 'b', tileIds: [5] }
+	],
 	customData: [],
 	tileColliders: [
 		{ tileId: 0, shape: 'rect', sensor: false, group: 'DEFAULT' },
 		{ tileId: 1, shape: 'rect', sensor: true, group: 'DEFAULT' },
 		{ tileId: 2, shape: 'pixel', sensor: false, group: 'DEFAULT' },
-		{ tileId: 3, shape: 'rect', sensor: false, group: 'DEFAULT' }
+		{ tileId: 3, shape: 'rect', sensor: false, group: 'DEFAULT' },
+		{ tileId: 4, shape: 'rect', sensor: false, group: 'DEFAULT' },
+		{ tileId: 5, shape: 'rect', sensor: false, group: 'DEFAULT' }
 	]
 } satisfies SvTileset;
 
-const TILE_ID: Record<string, number> = { '#': 0, '!': 1, p: 2, s: 3 };
+const TILE_ID: Record<string, number> = { '#': 0, '!': 1, p: 2, s: 3, q: 4, r: 5 };
 
 /** Bottom half of tile 2 is opaque; every other tile is empty (never asked for). */
 const halfMask: TileMask = (_uid, tileId) => {
@@ -87,6 +94,35 @@ function level(rows: string[]): { project: SvLevelProject; level: SvLevel } {
 }
 
 {
+	// Pixel offsets remain pixel offsets instead of being rounded back onto the grid.
+	const { project, level: lvl } = level(['#']);
+	lvl.layers[0]!.gridTiles[0]!.px = [7, 3];
+	const [rect] = tileColliderRects(project, lvl);
+	assert.deepEqual([rect!.x, rect!.y, rect!.w, rect!.h], [7, 3, 16, 16]);
+}
+
+{
+	// Authored X flip mirrors a left-edge pixel mask to the right edge.
+	const { project, level: lvl } = level(['p']);
+	lvl.layers[0]!.gridTiles[0]!.f = 1;
+	const leftMask: TileMask = () => {
+		const mask = new Uint8Array(16 * 16);
+		for (let y = 0; y < 16; y++) mask[y * 16] = 1;
+		return mask;
+	};
+	const [rect] = tileColliderRects(project, lvl, leftMask);
+	assert.deepEqual([rect!.x, rect!.y, rect!.w, rect!.h], [15, 0, 1, 16]);
+}
+
+{
+	// JSON tuple merge keys distinguish one comma-containing tag from two separate tags.
+	const { project, level: lvl } = level(['qr']);
+	const rects = tileColliderRects(project, lvl);
+	assert.equal(rects.length, 2);
+	assert.deepEqual(rects.map((rect) => rect.tags), [['a,b'], ['a', 'b']]);
+}
+
+{
 	// A 4x2 solid block merges into ONE cuboid, not eight.
 	const { project, level: lvl } = level(['####', '####']);
 	const rects = tileColliderRects(project, lvl);
@@ -120,16 +156,13 @@ function level(rows: string[]): { project: SvLevelProject; level: SvLevel } {
 }
 
 {
-	// `pixel` shape follows the tile's opaque mask (bottom half), one rect per cell.
+	// `pixel` shape follows the opaque mask and merges matching edges across tile boundaries.
 	const { project, level: lvl } = level(['pp']);
 	const rects = tileColliderRects(project, lvl, halfMask);
-	assert.equal(rects.length, 2);
+	assert.equal(rects.length, 1);
 	assert.deepEqual(
 		rects.map((r) => [r.x, r.y, r.w, r.h]),
-		[
-			[0, 8, 16, 8],
-			[16, 8, 16, 8]
-		]
+		[[0, 8, 32, 8]]
 	);
 	// Without a mask a `pixel` tile degrades to the full cell (and merges like a `rect`).
 	const plain = tileColliderRects(project, lvl);

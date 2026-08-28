@@ -8,10 +8,10 @@ import { Pane } from 'tweakpane';
 import type { Mode, Tuning } from './game';
 import { MODES, MODE_LIST } from './modes';
 
-export const tuning: Tuning = { mode: 'platformer', debug: true, ...MODES.platformer.preset };
+export const tuning: Tuning = { mode: 'platformer', debug: false, ...MODES.platformer.preset };
 
 export interface PanelHooks {
-	onMode: (mode: Mode) => void;
+	onMode: (mode: Mode) => boolean | Promise<boolean>;
 	onRestart: () => void;
 	onExit: () => void;
 }
@@ -56,10 +56,18 @@ export function createPanel(container: HTMLElement, hooks: PanelHooks): PanelHan
 		pane.refresh();
 	}
 
-	mode.on('change', (ev) => {
-		Object.assign(tuning, MODES[ev.value].preset);
+	let acceptedMode = tuning.mode;
+	let modeGeneration = 0;
+	mode.on('change', async (ev) => {
+		const generation = ++modeGeneration;
+		const accepted = await hooks.onMode(ev.value);
+		if (generation !== modeGeneration) return;
+		if (!accepted) tuning.mode = acceptedMode;
+		else {
+			acceptedMode = ev.value;
+			Object.assign(tuning, MODES[ev.value].preset);
+		}
 		sync();
-		hooks.onMode(ev.value);
 	});
 	framing.on('change', sync);
 	sync();

@@ -44,7 +44,7 @@
 		ctx.imageSmoothingEnabled = false;
 
 		const url = tilesetImageUrl(projectDir, tileset.relPath);
-		const img = getImage(url) ?? ensureImage(url, () => editor.touch());
+		const img = getImage(url) ?? ensureImage(url, () => editor.redraw());
 		if (img) ctx.drawImage(img, 0, 0, w, h);
 
 		const grid = tileset.tileGridSize * scale;

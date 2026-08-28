@@ -23,6 +23,7 @@
 	import TilesetImport from './dialogs/TilesetImport.svelte';
 	import LocalizationEditor from './dialogs/LocalizationEditor.svelte';
 	import EntityDefsEditor from './dialogs/EntityDefsEditor.svelte';
+	import LevelFieldsEditor from './dialogs/LevelFieldsEditor.svelte';
 
 	/**
 	 * `onplay` gets the live document (no save round-trip) plus the level being edited, so a host
@@ -43,7 +44,8 @@
 		| 'flip'
 		| 'import'
 		| 'localization'
-		| 'entities';
+		| 'entities'
+		| 'levelFields';
 	let dialog = $state<DialogKind | null>(null);
 
 	const activeType = $derived(editor.activeLayerDef?.type);
@@ -54,7 +56,7 @@
 
 	function isTyping(t: EventTarget | null): boolean {
 		const el = t as HTMLElement | null;
-		return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+		return !!el && !!el.closest('input, textarea, select, button, [contenteditable="true"], [role="textbox"], [role="slider"]');
 	}
 
 	function commitFocusedEditor(e: PointerEvent) {
@@ -137,7 +139,7 @@
 
 	onMount(() => {
 		editor.refreshProjectList();
-		if (!editor.project && editor.projectPath) editor.load();
+		if (!editor.project && editor.projectPath) void editor.load();
 		const root = rootEl;
 		window.addEventListener('keydown', onKey);
 		root?.addEventListener('pointerdown', commitFocusedEditor, { capture: true });
@@ -201,6 +203,8 @@
 		<LocalizationEditor onclose={() => (dialog = null)} />
 	{:else if dialog === 'entities'}
 		<EntityDefsEditor onclose={() => (dialog = null)} />
+	{:else if dialog === 'levelFields'}
+		<LevelFieldsEditor onclose={() => (dialog = null)} />
 	{/if}
 </div>
 
@@ -236,6 +240,7 @@
 		grid-template-rows: auto 1fr;
 		height: 100%;
 		width: 100%;
+		container-type: inline-size;
 		overflow: hidden;
 		background: var(--bg);
 		color: var(--text);
@@ -555,5 +560,37 @@
 			transition-duration: 1ms !important;
 			animation-duration: 1ms !important;
 		}
+	}
+
+	@media (max-width: 1100px) {
+		.editor {
+			grid-template-columns: 220px minmax(320px, 1fr);
+			grid-template-rows: auto minmax(260px, 1fr) minmax(170px, 34%);
+		}
+		.left { grid-column: 1; grid-row: 2 / 4; }
+		.center { grid-column: 2; grid-row: 2; }
+		.right {
+			grid-column: 2;
+			grid-row: 3;
+			border-left: 0;
+			border-top: 1px solid var(--border);
+			overflow: auto;
+		}
+	}
+
+	@media (max-width: 700px) {
+		.editor {
+			grid-template-columns: minmax(0, 1fr);
+			grid-template-rows: auto minmax(260px, 1fr) minmax(130px, 25%) minmax(130px, 25%);
+		}
+		.center { grid-column: 1; grid-row: 2; }
+		.left {
+			grid-column: 1;
+			grid-row: 3;
+			border-right: 0;
+			border-top: 1px solid var(--border);
+			overflow: auto;
+		}
+		.right { grid-column: 1; grid-row: 4; }
 	}
 </style>

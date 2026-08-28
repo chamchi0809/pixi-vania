@@ -8,10 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json",
-    "check": "echo 'no checks'"
+    "check": "node --disable-warning=ExperimentalWarning --experimental-strip-types check.ts"
   },
   "dependencies": {
-    "@dimforge/rapier2d-compat": "^0.19.0",
+    "@dimforge/rapier2d-compat": "^0.20.0",
     "pixi-vania": "workspace:*",
     "pixi.js": "8.19.0",
     "tweakpane": "^4.0.5"
@@ -21,6 +21,6 @@
     "@tweakpane/core": "^2.0.5",
     "svelte": "^5.55.2",
     "typescript": "6.0.3",
-    "vite": "8.2.0"
+    "vite": "7.3.6"
   }
 }

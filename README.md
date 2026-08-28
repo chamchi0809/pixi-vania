@@ -19,7 +19,8 @@
 npm i pixi-vania pixi.js @dimforge/rapier2d-compat
 ```
 
-Rapier is optional if you only need rendering.
+Pixi and Rapier are optional when you only use the JSON format helpers from `pixi-vania` or
+`pixi-vania/format`. Runtime users import `pixi-vania/runtime` and install both peers.
 
 ## Quick start
 
@@ -49,7 +50,7 @@ Load a level with `createLevelRuntime`:
 
 ```ts
 import RAPIER from '@dimforge/rapier2d-compat';
-import { createLevelRuntime } from 'pixi-vania';
+import { createLevelRuntime } from 'pixi-vania/runtime';
 
 await RAPIER.init();
 const world = new RAPIER.World({ x: 0, y: 40 });
@@ -61,6 +62,31 @@ const level = await createLevelRuntime(project, levelUid, {
 	navGrid: true
 });
 ```
+
+Only tilesets referenced by visible layers are loaded. Hosts control the loading contract, including
+progress, cancellation, concurrency, cache lookup, fallback/skip behavior, and custom loaders:
+
+```ts
+const controller = new AbortController();
+const level = await createLevelRuntime(project, levelUid, {
+	world,
+	basePath: projectFileUrl,
+	basePathKind: 'project-file',
+	loading: {
+		concurrency: 2,
+		signal: controller.signal,
+		getCached: ({ tileset }) => textureCache.get(tileset.uid),
+		load: ({ url }) => Assets.load(url), // may return Texture or Promise<Texture>
+		onProgress: ({ loaded, total, status, tileset }) =>
+			showProgress(loaded, total, status, tileset.identifier),
+		onError: (_error, _context) => Texture.EMPTY // or 'skip' / 'throw'
+	}
+});
+```
+
+For a strictly synchronous startup, preload/cache textures and call `createLevelRuntimeSync`. Use
+`loadTilesetTexturesSync` for cache-only selection, or pass a preloaded `textures` map to either
+runtime creator. `loadTilesetTextures` also supports `strategy: 'referenced' | 'all'` directly.
 
 This creates the tile meshes, static colliders, and entity list. Your game remains responsible for spawning entities:
 
@@ -91,7 +117,8 @@ collider.setCollisionGroups(groupsForLayer(table, 'Enemy'));
 
 ### Tile colliders and tags
 
-Each item in `level.colliders` contains the Rapier collider and its source rectangle. Adjacent box colliders with the same configuration are merged. Pixel-shaped colliders stay within their source tile.
+Each item in `level.colliders` contains the Rapier collider and its source rectangle. Adjacent box
+and pixel-mask rectangles with the same configuration are merged, including across tile boundaries.
 
 ```ts
 for (const { collider, rect } of level.colliders) {
@@ -142,10 +169,21 @@ mountEditor(el, { store: staticStore(['/assets/levels/demo.svlevel.json']) });
 
 ## API reference
 
-### `pixi-vania`
+### `pixi-vania` and `pixi-vania/format`
+
+```ts
+parseProject(input, options)
+validateProject(input)
+assertProject(input)
+computeAutoTiles(options)
+localize(localization, key, locale)
+```
+
+### `pixi-vania/runtime`
 
 ```ts
 createLevelRuntime(project, levelId, options): Promise<LevelRuntime>
+createLevelRuntimeSync(project, levelId, options): LevelRuntime
 
 LevelRuntime {
 	level
@@ -155,10 +193,13 @@ LevelRuntime {
 	navGrid
 	entities
 	pixelsPerUnit
+	stats
 	destroy()
 }
 
-loadTilesetTextures(project, basePath?)
+loadTilesetTextures(project, options)
+loadTilesetTexturesSync(project, options)
+referencedTilesets(project, level)
 buildTileLayers(project, level, textures)
 tileMaskFromTextures(project, textures)
 createLevelBody(world, level, pixelsPerUnit)
@@ -167,20 +208,6 @@ tileColliderRects(project, level, mask?)
 buildNavGrid(project, level, mask?)
 tileBatches(project, layer)
 tileTagIndex(tileset)
-buildCollisionGroups(layers)
-groupsForLayer(table, id)
-interactionGroups(membership, filter?)
-collisionTargetsFor(layers, id)
-cloneDefaultLayers()
-computeAutoTiles(options)
-getEntityType(project, id)
-getEntityTypeDef(project, id)
-defaultEntityFields(project, id)
-localize(localization, key, locale)
-collectLocalizableStrings(project)
-emptyLocalization()
-parseScript(raw)
-serializeScript(lines)
 ```
 
 ### `pixi-vania/editor`
@@ -211,15 +238,25 @@ Only one editor can be mounted per page because its store is a module singleton.
 levelEditor({
 	staticDir?: string,       // default: 'public'
 	base?: string,            // default: '/__svlevel'
-	imageExtensions?: string[]
+	imageExtensions?: string[],
+	previewWrites?: boolean,       // default false
+	writeToken?: string,
+	uploadDirectories?: string[],
+	allowUploadOverwrite?: boolean,// default false
+	requireRevision?: boolean,     // default true
+	backupOnSave?: boolean,        // default true
+	maxBodyBytes?: number
 }): Plugin
 ```
 
-The plugin exposes project listing, asset listing, saving, and uploading under `base`. All paths are confined to `staticDir`.
+The plugin exposes project listing, asset listing, saving, and uploading under `base`. It enforces
+real-path containment, same-origin writes, bounded JSON bodies, atomic save + backup, optimistic
+revision locking, and allowlisted image uploads. Preview writes are opt-in.
 
 ## Development
 
-The tile shader currently requires WebGL, so initialize Pixi with `preference: 'webgl'`.
+The tile shader supports WebGPU and WebGL. `preference: 'webgpu'` uses WebGPU when available and
+lets Pixi fall back to WebGL.
 
 ```sh
 pnpm i

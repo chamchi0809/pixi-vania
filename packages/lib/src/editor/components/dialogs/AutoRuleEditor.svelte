@@ -76,11 +76,7 @@
 		edit('Add rule group', () => project.autoRuleGroups.unshift(g));
 	}
 	function deleteGroup(uid: number) {
-		if (!project) return;
-		edit(
-			'Delete rule group',
-			() => (project.autoRuleGroups = project.autoRuleGroups.filter((g) => g.uid !== uid))
-		);
+		editor.deleteRuleGroup(uid);
 	}
 	function renameGroup(g: SvAutoRuleGroup, name: string) {
 		// Name is the group id — cascade the rename through grid cells + rule patterns, enforce unique.
@@ -192,7 +188,7 @@
 		ctx.imageSmoothingEnabled = false;
 
 		const url = tilesetImageUrl(projectDir, tileset.relPath);
-		const img = getImage(url) ?? ensureImage(url, () => editor.touch());
+		const img = getImage(url) ?? ensureImage(url, () => editor.redraw());
 		if (img) ctx.drawImage(img, 0, 0, cssW, cssH);
 
 		const grid = tileset.tileGridSize * tileScale;

@@ -5,7 +5,7 @@
 
 const cache = new Map<string, HTMLImageElement>();
 const pending = new Map<string, Promise<HTMLImageElement>>();
-const failed = new Set<string>();
+const failed = new Map<string, { attempts: number; retryAt: number }>();
 
 /** Synchronous cache lookup — returns the decoded image or undefined. */
 export function getImage(src: string): HTMLImageElement | undefined {
@@ -13,25 +13,28 @@ export function getImage(src: string): HTMLImageElement | undefined {
 }
 
 export function imageFailed(src: string): boolean {
-	return failed.has(src);
+	return (failed.get(src)?.retryAt ?? 0) > Date.now();
 }
 
 /** Ensure an image is loading/loaded. `onLoad` fires once when it becomes available. */
 export function ensureImage(src: string, onLoad?: () => void): HTMLImageElement | undefined {
 	const have = cache.get(src);
 	if (have) return have;
-	if (failed.has(src)) return undefined;
+	const failure = failed.get(src);
+	if (failure && failure.retryAt > Date.now()) return undefined;
 	if (!pending.has(src)) {
 		const p = new Promise<HTMLImageElement>((resolve, reject) => {
 			const img = new Image();
 			img.onload = () => {
 				cache.set(src, img);
 				pending.delete(src);
+				failed.delete(src);
 				resolve(img);
 			};
 			img.onerror = (e) => {
 				pending.delete(src);
-				failed.add(src);
+				const attempts = (failed.get(src)?.attempts ?? 0) + 1;
+				failed.set(src, { attempts, retryAt: Date.now() + Math.min(30_000, 1000 * 2 ** (attempts - 1)) });
 				reject(e);
 			};
 			img.src = src;
@@ -42,6 +45,18 @@ export function ensureImage(src: string, onLoad?: () => void): HTMLImageElement 
 		pending.get(src)!.then(onLoad).catch(() => {});
 	}
 	return undefined;
+}
+
+/** Forget a transient failure/cache entry so a repaired or replaced asset can be retried now. */
+export function invalidateImage(src: string): void {
+	cache.delete(src);
+	failed.delete(src);
+}
+
+/** Drop project-scoped image state between editor mounts. Pending decodes may finish harmlessly. */
+export function clearImageCache(): void {
+	cache.clear();
+	failed.clear();
 }
 
 /**

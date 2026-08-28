@@ -42,23 +42,41 @@ export interface CellRect {
 	tags: string[];
 }
 
-const tagIndexes = new WeakMap<SvTileset, Map<number, string[]>>();
-
-/** Tile id -> enum-tag value ids, from the tileset tag editor. Built once per tileset. */
+/** Tile id -> enum-tag value ids. Rebuilt so mutable editor snapshots can never return stale tags. */
 export function tileTagIndex(tileset: SvTileset): Map<number, string[]> {
-	let idx = tagIndexes.get(tileset);
-	if (!idx) {
-		idx = new Map();
-		for (const tag of tileset.enumTags ?? [])
-			for (const id of tag.tileIds) idx.set(id, [...(idx.get(id) ?? []), tag.enumValueId].sort());
-		tagIndexes.set(tileset, idx);
+	const idx = new Map<number, string[]>();
+	for (const tag of tileset.enumTags ?? []) {
+		for (const id of tag.tileIds) {
+			const values = new Set(idx.get(id) ?? []);
+			values.add(tag.enumValueId);
+			idx.set(id, [...values].sort());
+		}
 	}
 	return idx;
 }
 
 // Tags ride the merge key: two tiles that differ only by tag must stay separate colliders.
 const key = (c: SvTileCollider, tags: string[]): string =>
-	`${c.group ?? ''}|${c.sensor ? 1 : 0}|${tags.join(',')}`;
+	JSON.stringify([c.group ?? '', c.sensor, [...new Set(tags)].sort()]);
+
+/** Final visual flip, including authored bits and deterministic tileset random-flip settings. */
+export function resolvedTileFlip(tileset: SvTileset, tile: SvTile, tileSize: number): number {
+	const config = tileset.tileFlips?.find((f) => f.tileId === tile.t);
+	if (!config) return tile.f;
+	const cx = Math.floor(tile.px[0] / tileSize);
+	const cy = Math.floor(tile.px[1] / tileSize);
+	const random = (salt: number): number => {
+		let h = (tileset.flipSeed ?? 0) ^ salt;
+		h = Math.imul(h ^ Math.imul(cx, 0x165667b1), 0x9e3779b1);
+		h = Math.imul(h ^ Math.imul(cy, 0x4c957f2d), 0x85ebca6b);
+		h ^= h >>> 16;
+		return (h >>> 0) / 4294967296;
+	};
+	let flip = tile.f;
+	if (config.chanceX > 0 && random(0x1f123bb5) < Math.min(1, config.chanceX)) flip ^= 1;
+	if (config.chanceY > 0 && random(0x5f356495) < Math.min(1, config.chanceY)) flip ^= 2;
+	return flip;
+}
 
 /**
  * Greedy rect merge over a cell set: grow right along the row, then down while every column of
@@ -101,29 +119,83 @@ function mergeCells(cells: Set<string>): Rect[] {
  */
 export type TileMask = (tilesetUid: number, tileId: number) => Uint8Array | undefined;
 
-/**
- * ponytail: a `pixel` tile merges only within its own cell, never with the neighbour beside it.
- * Merging across cells would need one level-wide pixel grid — do that if the collider count bites.
- */
 function maskRects(
 	mask: TileMask | undefined,
 	tileset: SvTileset,
 	tileId: number,
+	flip: number,
 	cache: Map<string, Rect[]>
 ): Rect[] | undefined {
-	const k = `${tileset.uid}:${tileId}`;
+	const k = `${tileset.uid}:${tileId}:${flip}`;
 	let rects = cache.get(k);
 	if (!rects) {
 		const size = tileset.tileGridSize;
 		const m = mask?.(tileset.uid, tileId);
 		if (!m) return undefined;
 		const cells = new Set<string>();
-		for (let y = 0; y < size; y++)
-			for (let x = 0; x < size; x++) if (m[y * size + x]) cells.add(`${x},${y}`);
+		for (let y = 0; y < size; y++) {
+			for (let x = 0; x < size; x++) {
+				const sx = flip & 1 ? size - 1 - x : x;
+				const sy = flip & 2 ? size - 1 - y : y;
+				if (m[sy * size + sx]) cells.add(`${x},${y}`);
+			}
+		}
 		rects = mergeCells(cells);
+		// Pathological alpha masks can create hundreds of colliders per tile. A full-cell fallback is
+		// predictable and keeps an untrusted atlas from exhausting the physics world.
+		if (rects.length > 128) rects = [{ cx: 0, cy: 0, w: size, h: size }];
 		cache.set(k, rects);
 	}
 	return rects;
+}
+
+/** Merge touching sub-rects with identical collision metadata, including across tile boundaries. */
+function mergeColliderRects(rects: CellRect[]): CellRect[] {
+	const buckets = new Map<string, CellRect[]>();
+	for (const rect of rects) {
+		const bucket = buckets.get(key(rect.config, rect.tags)) ?? [];
+		bucket.push(rect);
+		buckets.set(key(rect.config, rect.tags), bucket);
+	}
+	const out: CellRect[] = [];
+	for (const bucket of buckets.values()) {
+		const horizontal = new Map<string, CellRect[]>();
+		for (const rect of bucket) {
+			const row = JSON.stringify([rect.y, rect.h]);
+			const items = horizontal.get(row) ?? [];
+			items.push(rect);
+			horizontal.set(row, items);
+		}
+		const rows: CellRect[] = [];
+		for (const items of horizontal.values()) {
+			items.sort((a, b) => a.x - b.x);
+			for (const item of items) {
+				const previous = rows.at(-1);
+				if (previous && previous.y === item.y && previous.h === item.h && Math.abs(previous.x + previous.w - item.x) < 1e-7)
+					previous.w += item.w;
+				else rows.push({ ...item });
+			}
+		}
+		const vertical = new Map<string, CellRect[]>();
+		for (const rect of rows) {
+			const column = JSON.stringify([rect.x, rect.w]);
+			const items = vertical.get(column) ?? [];
+			items.push(rect);
+			vertical.set(column, items);
+		}
+		const mergedBucket: CellRect[] = [];
+		for (const items of vertical.values()) {
+			items.sort((a, b) => a.y - b.y);
+			for (const item of items) {
+				const previous = mergedBucket.at(-1);
+				if (previous && previous.x === item.x && previous.w === item.w && Math.abs(previous.y + previous.h - item.y) < 1e-7)
+					previous.h += item.h;
+				else mergedBucket.push({ ...item });
+			}
+		}
+		out.push(...mergedBucket);
+	}
+	return out;
 }
 
 /** Merged collider rects for a level, in level-local pixels (top-left origin, Y-down). */
@@ -144,8 +216,9 @@ export function tileColliderRects(
 				const config = getTileCollider(batch.tileset, tile.t);
 				if (!config) continue;
 				const tags = tagsOf.get(tile.t) ?? [];
+				const flip = resolvedTileFlip(batch.tileset, tile, layer.gridSize);
 				if (config.shape === 'pixel') {
-					const sub = maskRects(mask, batch.tileset, tile.t, maskCache);
+					const sub = maskRects(mask, batch.tileset, tile.t, flip, maskCache);
 					if (sub) {
 						const scale = layer.gridSize / batch.tileset.tileGridSize;
 						for (const r of sub) {
@@ -161,11 +234,22 @@ export function tileColliderRects(
 						continue;
 					}
 				}
+				const aligned =
+					tile.px[0] % layer.gridSize === 0 && tile.px[1] % layer.gridSize === 0;
+				if (!aligned) {
+					out.push({
+						x: tile.px[0] + layer.pxOffsetX,
+						y: tile.px[1] + layer.pxOffsetY,
+						w: layer.gridSize,
+						h: layer.gridSize,
+						config,
+						tags
+					});
+					continue;
+				}
 				const k = key(config, tags);
 				const bucket = byKind.get(k) ?? { config, tags, cells: new Set<string>() };
-				bucket.cells.add(
-					`${Math.round(tile.px[0] / layer.gridSize)},${Math.round(tile.px[1] / layer.gridSize)}`
-				);
+				bucket.cells.add(`${tile.px[0] / layer.gridSize},${tile.px[1] / layer.gridSize}`);
 				byKind.set(k, bucket);
 			}
 		}
@@ -182,7 +266,7 @@ export function tileColliderRects(
 			}
 		}
 	}
-	return out;
+	return mergeColliderRects(out);
 }
 
 export interface NavGrid {

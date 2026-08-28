@@ -1,8 +1,8 @@
 /** Pure helpers for the project's localization table (see `SvLocalization` in `./types`). */
 
-import { parseScript } from './dialogue';
+import { parseScript } from './dialogue.ts';
 import type { SvLevelProject, SvLocalization } from './types';
-import { getEntityTypeDef } from './types';
+import { getEntityTypeDef } from './types.ts';
 
 export const emptyLocalization = (): SvLocalization => ({ locales: [], entries: [] });
 
@@ -26,8 +26,9 @@ export function collectLocalizableStrings(project: SvLevelProject): string[] {
 				const def = getEntityTypeDef(project, e.type);
 				for (const f of def?.fields ?? []) {
 					if (!f.localized) continue;
-					if (f.type === 'Dialogue') for (const line of parseScript(e.fields[f.id])) add(line.text);
-					else add(e.fields[f.id]);
+					const value = e.fields[f.id] ?? f.default;
+					if (f.type === 'Dialogue') for (const line of parseScript(value)) add(line.text);
+					else add(value);
 				}
 			}
 		}
@@ -42,5 +43,5 @@ export function localize(
 	locale: string | undefined
 ): string {
 	if (!loc || !locale) return key;
-	return loc.entries.find((e) => e.key === key)?.values[locale] || key;
+	return loc.entries.find((e) => e.key === key)?.values[locale] ?? key;
 }

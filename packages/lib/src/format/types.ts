@@ -159,13 +159,8 @@ export interface SvAutoRule {
 	tileXOffset: number;
 	tileYOffset: number;
 	checker: 'None' | 'Horizontal' | 'Vertical';
-	/**
-	 * `computeAutoTiles` renders only `'Single'` (one tile/cell). `'Stamp'` + pivot are carried for
-	 * LDtk round-trip but render as a single tile, not expanded. Editor only authors `'Single'`.
-	 */
-	tileMode: 'Single' | 'Stamp';
-	pivotX: number;
-	pivotY: number;
+	/** One chosen tile per matching cell. Unsupported legacy `Stamp` input is rejected by validation. */
+	tileMode: 'Single';
 	outOfBoundsValue: string | null;
 	perlinActive: boolean;
 	perlinSeed: number;

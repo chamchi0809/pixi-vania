@@ -16,6 +16,8 @@
     // has been built. The emitted d.ts still says `pixi-vania`.
     "paths": {
       "pixi-vania": ["./packages/lib/src/index.ts"],
+			"pixi-vania/format": ["./packages/lib/src/format.ts"],
+			"pixi-vania/runtime": ["./packages/lib/src/runtime.ts"],
       "pixi-vania/editor": ["./packages/lib/src/editor.ts"],
       "pixi-vania/vite": ["./packages/lib/src/vite.ts"]
     },

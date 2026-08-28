@@ -3,7 +3,6 @@
  * own project (`topview.svlevel.json`) — rooms whose walls read as walls from above, unlike the
  * platformer's floors and ledges.
  */
-import { Container, Graphics } from 'pixi.js';
 import type { GameMode } from './game';
 
 /** Ball radius in physics units (1 unit == 1 tile). */
@@ -20,11 +19,11 @@ export const topdown: GameMode = {
 	// Nothing falls in a top-down world; movement is velocity the input sets outright.
 	gravity: () => 0,
 
-	sprite(ppu) {
-		const c = new Container();
-		c.addChild(new Graphics().circle(0, 0, R * ppu).fill('#63c74d'));
+	sprite(ppu, pixi) {
+		const c = new pixi.Container();
+		c.addChild(new pixi.Graphics().circle(0, 0, R * ppu).fill('#63c74d'));
 		// The nub is the only thing that can show a facing on a circle.
-		c.addChild(new Graphics().rect(0, -1.5, R * ppu, 3).fill('#1a1a22'));
+		c.addChild(new pixi.Graphics().rect(0, -1.5, R * ppu, 3).fill('#1a1a22'));
 		return c;
 	},
 

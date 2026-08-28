@@ -414,11 +414,11 @@
 			// Label (only when zoomed in enough to be legible).
 			if (interactive && z >= 1.5 && def) {
 				ctx.globalAlpha = 0.9;
+				ctx.font = `${7 / z}px ui-monospace, monospace`;
+				ctx.textBaseline = 'top';
 				ctx.fillStyle = '#000';
 				ctx.fillRect(x, y - 9 / z, ctx.measureText(def.name).width / z + 4 / z, 8 / z);
 				ctx.fillStyle = color;
-				ctx.font = `${7 / z}px ui-monospace, monospace`;
-				ctx.textBaseline = 'top';
 				ctx.fillText(def.name, x + 2 / z, y - 8.5 / z);
 			}
 			ctx.restore();
@@ -856,6 +856,10 @@
 		const px: [number, number] = [Math.floor(localX / gs) * gs, Math.floor(localY / gs) * gs];
 		editor.commit('Place entity', () => {
 			const ent = makeEntity(project, editor.selectedEntityType!, px);
+			ent.px = [
+				Math.max(-target!.pxOffsetX, Math.min(ent.px[0], level.pxWid - target!.pxOffsetX - ent.width)),
+				Math.max(-target!.pxOffsetY, Math.min(ent.px[1], level.pxHei - target!.pxOffsetY - ent.height))
+			];
 			target!.entities.push(ent);
 			editor.selectedEntityIids = [ent.iid];
 		});
@@ -1030,7 +1034,6 @@
 	}
 
 	function onPointerUp(e: PointerEvent) {
-		canvasEl.releasePointerCapture?.(e.pointerId);
 		if (resizing) {
 			const r = resizing;
 			resizing = null;
@@ -1064,6 +1067,20 @@
 			editor.endStroke();
 		}
 		eraseButton = false;
+	}
+
+	function cancelPointer() {
+		panning = false;
+		resizing = null;
+		movingLevel = false;
+		levelMoveStroke = false;
+		movingEntities = false;
+		rectDrag = null;
+		painting = false;
+		lastCell = null;
+		eraseButton = false;
+		editor.cancelStroke();
+		scheduleDraw();
 	}
 
 	function onPointerLeave() {
@@ -1156,8 +1173,8 @@
 				const dx = hoverWorldDelta().x;
 				const dy = hoverWorldDelta().y;
 				en.px = [
-					Math.round((origin[0] + dx) / gs) * gs,
-					Math.round((origin[1] + dy) / gs) * gs
+					Math.max(-li.pxOffsetX, Math.min(Math.round((origin[0] + dx) / gs) * gs, level.pxWid - li.pxOffsetX - en.width)),
+					Math.max(-li.pxOffsetY, Math.min(Math.round((origin[1] + dy) / gs) * gs, level.pxHei - li.pxOffsetY - en.height))
 				];
 			}
 		}
@@ -1214,23 +1231,41 @@
 		if (e.code === 'Space') spaceDown = false;
 	}
 
+	function onCanvasKeyDown(e: KeyboardEvent) {
+		const step = (editor.activeLayerInstance?.gridSize ?? editor.project?.defaultGridSize ?? 16) * (e.shiftKey ? 4 : 1);
+		if (e.key === 'ArrowLeft') editor.camera = { ...editor.camera, x: editor.camera.x - step };
+		else if (e.key === 'ArrowRight') editor.camera = { ...editor.camera, x: editor.camera.x + step };
+		else if (e.key === 'ArrowUp') editor.camera = { ...editor.camera, y: editor.camera.y - step };
+		else if (e.key === 'ArrowDown') editor.camera = { ...editor.camera, y: editor.camera.y + step };
+		else return;
+		e.preventDefault();
+	}
+
 	onMount(() => {
 		ctx = canvasEl.getContext('2d');
 		dpr = window.devicePixelRatio || 1;
 
+		let resizeFrame = 0;
+		let nextSize: DOMRectReadOnly | undefined;
 		const ro = new ResizeObserver((entries) => {
-			const r = entries[0].contentRect;
-			cssW = Math.max(1, r.width);
-			cssH = Math.max(1, r.height);
-			dpr = window.devicePixelRatio || 1;
-			canvasEl.width = Math.round(cssW * dpr);
-			canvasEl.height = Math.round(cssH * dpr);
-			scheduleDraw();
+			nextSize = entries[0]?.contentRect;
+			if (resizeFrame) return;
+			resizeFrame = requestAnimationFrame(() => {
+				resizeFrame = 0;
+				if (!nextSize) return;
+				cssW = Math.max(1, nextSize.width);
+				cssH = Math.max(1, nextSize.height);
+				dpr = window.devicePixelRatio || 1;
+				canvasEl.width = Math.round(cssW * dpr);
+				canvasEl.height = Math.round(cssH * dpr);
+				scheduleDraw();
+			});
 		});
 		ro.observe(containerEl);
 
 		window.addEventListener('keydown', onKeyDown);
 		window.addEventListener('keyup', onKeyUp);
+		window.addEventListener('blur', cancelPointer);
 
 		// Frame the level once it (and the canvas size) are ready.
 		let framed = false;
@@ -1247,6 +1282,8 @@
 			ro.disconnect();
 			window.removeEventListener('keydown', onKeyDown);
 			window.removeEventListener('keyup', onKeyUp);
+			window.removeEventListener('blur', cancelPointer);
+			if (resizeFrame) cancelAnimationFrame(resizeFrame);
 			clearInterval(id);
 		};
 	});
@@ -1282,16 +1319,21 @@
 	role="application"
 	aria-label="Level editing canvas"
 >
-	<canvas
-		bind:this={canvasEl}
+		<canvas
+			bind:this={canvasEl}
+			tabindex="0"
+			aria-label="Level canvas. Use arrow keys to pan; use toolbar controls to select editing tools."
 		style="width:{cssW}px;height:{cssH}px;cursor:{cursorStyle}"
 		onpointerdown={onPointerDown}
 		onpointermove={(e) => {
 			onPointerMoveTrackWorld(e);
 			onPointerMove(e);
 		}}
-		onpointerup={onPointerUp}
-		onpointerleave={onPointerLeave}
+			onpointerup={onPointerUp}
+			onpointercancel={cancelPointer}
+			onlostpointercapture={cancelPointer}
+			onpointerleave={onPointerLeave}
+			onkeydown={onCanvasKeyDown}
 		onwheel={onWheel}
 		oncontextmenu={(e) => e.preventDefault()}
 	></canvas>

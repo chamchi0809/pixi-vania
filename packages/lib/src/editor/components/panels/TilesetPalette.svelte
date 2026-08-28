@@ -5,7 +5,9 @@
 	 */
 	import { onMount } from 'svelte';
 	import { editor } from '../../state/editorStore.svelte';
-	import { ensureImage, tilesetImageUrl } from '../../render/images';
+	import { ensureImage, invalidateImage, tilesetImageUrl } from '../../render/images';
+	import { recomputeAllAutoTilesAllLevels } from '../../state/ops';
+	import { tileIdToSrc, type SvTileset } from '../../../format/types';
 	import Panel from './Panel.svelte';
 
 	let wrap: HTMLDivElement;
@@ -13,6 +15,8 @@
 	let ctx: CanvasRenderingContext2D | null = null;
 	let scale = $state(2);
 	let wrapW = $state(280);
+	let replacementUid = $state<number | null>(null);
+	let replacing = $state(false);
 
 	let sel = $state<{ c0: number; r0: number; c1: number; r1: number } | null>(null);
 	let dragging = false;
@@ -22,6 +26,108 @@
 	);
 	const tileset = $derived(editor.activeTileset);
 	const stride = $derived(tileset ? tileset.tileGridSize + tileset.spacing : 16);
+	const alternatives = $derived(editor.project?.tilesets.filter((item) => item.uid !== tileset?.uid) ?? []);
+	const usageCount = $derived.by(() => {
+		if (!tileset || !editor.project) return 0;
+		const project = editor.project;
+		let count = project.layers.filter((layer) => layer.tilesetDefUid === tileset.uid).length;
+		count += project.autoRuleGroups.filter((group) => group.tilesetDefUid === tileset.uid).length;
+		count += (project.autoRulePresets ?? []).filter((preset) => preset.tilesetDefUid === tileset.uid).length;
+		for (const item of project.enums) count += item.values.filter((value) => value.tile?.tilesetUid === tileset.uid).length;
+		return count;
+	});
+
+	function renameTileset(tileset: SvTileset, raw: string) {
+		const next = raw.trim();
+		const project = editor.project;
+		if (!project || !next || next === tileset.identifier || project.tilesets.some((item) => item !== tileset && item.identifier === next)) return;
+		editor.commit('Rename tileset', () => (tileset.identifier = next));
+	}
+
+	const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+		const image = new Image();
+		image.onload = () => resolve(image);
+		image.onerror = () => reject(new Error(`could not load ${src}`));
+		image.src = src;
+	});
+
+	async function replaceImage(tileset: SvTileset) {
+		const raw = prompt('New image path (relative to the project file):', tileset.relPath)?.trim();
+		if (!raw || raw === tileset.relPath || replacing) return;
+		replacing = true;
+		const oldUrl = tilesetImageUrl(projectDir, tileset.relPath);
+		const nextUrl = tilesetImageUrl(projectDir, raw);
+		try {
+			const image = await loadImage(nextUrl);
+			const project = editor.project;
+			if (!project || !project.tilesets.some((item) => item.uid === tileset.uid)) return;
+			editor.commit('Replace tileset image', () => {
+				tileset.relPath = raw;
+				tileset.pxWid = image.naturalWidth;
+				tileset.pxHei = image.naturalHeight;
+				tileset.cWid = Math.max(0, Math.floor((tileset.pxWid - tileset.padding * 2 + tileset.spacing) / (tileset.tileGridSize + tileset.spacing)));
+				tileset.cHei = Math.max(0, Math.floor((tileset.pxHei - tileset.padding * 2 + tileset.spacing) / (tileset.tileGridSize + tileset.spacing)));
+				const max = tileset.cWid * tileset.cHei;
+				tileset.enumTags = tileset.enumTags.map((tag) => ({ ...tag, tileIds: tag.tileIds.filter((id) => id < max) })).filter((tag) => tag.tileIds.length);
+				tileset.customData = tileset.customData.filter((item) => item.tileId < max);
+				tileset.tileColliders = tileset.tileColliders?.filter((item) => item.tileId < max);
+				tileset.tileFlips = tileset.tileFlips?.filter((item) => item.tileId < max);
+				tileset.tileWarps = tileset.tileWarps?.filter((item) => item.tileId < max);
+				for (const group of project.autoRuleGroups) if (group.tilesetDefUid === tileset.uid)
+					for (const rule of group.rules) rule.tileIds = rule.tileIds.filter((id) => id < max);
+				for (const level of project.levels) for (const layer of level.layers) if (layer.tilesetDefUid === tileset.uid)
+					layer.gridTiles = layer.gridTiles.filter((tile) => tile.t < max).map((tile) => ({ ...tile, src: tileIdToSrc(tileset, tile.t) }));
+				recomputeAllAutoTilesAllLevels(project);
+			});
+			invalidateImage(oldUrl);
+			invalidateImage(nextUrl);
+			editor.redraw();
+		} catch (error) {
+			editor.status = `Image replacement failed: ${(error as Error).message}`;
+		} finally {
+			replacing = false;
+		}
+	}
+
+	function deleteTileset(tileset: SvTileset) {
+		const project = editor.project;
+		if (!project) return;
+		const replacement = project.tilesets.find((item) => item.uid === replacementUid);
+		const replacementAction = replacement ? `moved to "${replacement.identifier}"` : 'cleared';
+		if (!confirm(`Delete "${tileset.identifier}"? ${usageCount} definition reference(s) will be ${replacementAction}.`)) return;
+		const oldUrl = tilesetImageUrl(projectDir, tileset.relPath);
+		editor.commit('Delete tileset', () => {
+			const nextUid = replacement?.uid ?? null;
+			const max = replacement ? replacement.cWid * replacement.cHei : 0;
+			const affectedLayers = new Set(project.layers.filter((layer) => layer.tilesetDefUid === tileset.uid).map((layer) => layer.uid));
+			for (const layer of project.layers) if (layer.tilesetDefUid === tileset.uid) layer.tilesetDefUid = nextUid;
+			for (const level of project.levels) for (const layer of level.layers) {
+				if (layer.tilesetDefUid === tileset.uid) layer.tilesetDefUid = nextUid;
+				if (!affectedLayers.has(layer.layerDefUid)) continue;
+				if (replacement) {
+					layer.gridTiles = layer.gridTiles
+						.filter((tile) => tile.t < max)
+						.map((tile) => ({ ...tile, src: tileIdToSrc(replacement, tile.t) }));
+				} else {
+					layer.gridTiles = [];
+				}
+			}
+			for (const group of project.autoRuleGroups) if (group.tilesetDefUid === tileset.uid) {
+				group.tilesetDefUid = nextUid;
+				if (replacement) for (const rule of group.rules) rule.tileIds = rule.tileIds.filter((id) => id < max);
+			}
+			for (const preset of project.autoRulePresets ?? []) if (preset.tilesetDefUid === tileset.uid) preset.tilesetDefUid = nextUid;
+			for (const item of project.enums) for (const value of item.values) {
+				if (value.tile?.tilesetUid !== tileset.uid) continue;
+				value.tile = replacement ? { ...value.tile, tilesetUid: replacement.uid } : null;
+			}
+			project.tilesets = project.tilesets.filter((item) => item.uid !== tileset.uid);
+			recomputeAllAutoTilesAllLevels(project);
+		});
+		invalidateImage(oldUrl);
+		replacementUid = null;
+		editor.redraw();
+	}
 
 	function fit() {
 		if (!tileset) return;
@@ -119,12 +225,20 @@
 
 	onMount(() => {
 		ctx = canvasEl!.getContext('2d');
+		let frame = 0;
 		const ro = new ResizeObserver((es) => {
-			wrapW = es[0].contentRect.width;
-			fit();
+			const width = es[0].contentRect.width;
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() => {
+				wrapW = width;
+				fit();
+			});
 		});
 		ro.observe(wrap);
-		return () => ro.disconnect();
+		return () => {
+			cancelAnimationFrame(frame);
+			ro.disconnect();
+		};
 	});
 
 	// Reset selection when the tileset changes; redraw on any relevant change.
@@ -142,6 +256,17 @@
 </script>
 
 <Panel title="Tileset">
+	{#if tileset}
+		<div class="manage">
+			<input aria-label="Tileset name" value={tileset.identifier} onchange={(event) => renameTileset(tileset, event.currentTarget.value)} />
+			<button disabled={replacing} onclick={() => void replaceImage(tileset)}>{replacing ? 'Loading…' : 'Replace image'}</button>
+			<select aria-label="Replacement tileset" value={replacementUid ?? ''} onchange={(event) => (replacementUid = event.currentTarget.value ? +event.currentTarget.value : null)}>
+				<option value="">Delete references</option>
+				{#each alternatives as item (item.uid)}<option value={item.uid}>Replace with {item.identifier}</option>{/each}
+			</select>
+			<button class="delete" onclick={() => deleteTileset(tileset)}>Delete ({usageCount} refs)</button>
+		</div>
+	{/if}
 	<div class="wrap" bind:this={wrap}>
 		{#if tileset}
 			<canvas
@@ -149,6 +274,8 @@
 				onpointerdown={onDown}
 				onpointermove={onMove}
 				onpointerup={onUp}
+				onpointercancel={onUp}
+				onlostpointercapture={onUp}
 			></canvas>
 		{:else}
 			<p class="hint">This layer has no tileset assigned.</p>
@@ -161,6 +288,14 @@
 		width: 100%;
 		overflow: auto;
 	}
+	.manage { display: grid; grid-template-columns: 1fr auto; gap: 4px; margin-bottom: 7px; }
+	.manage input, .manage select, .manage button {
+		min-width: 0; padding: 4px 6px; color: var(--text); background: var(--bg);
+		border: 1px solid var(--border); border-radius: 4px; font: inherit;
+	}
+	.manage button { cursor: pointer; }
+	.manage button:disabled { opacity: 0.5; cursor: default; }
+	.manage .delete:hover { color: #ff8787; }
 	canvas {
 		display: block;
 		image-rendering: pixelated;

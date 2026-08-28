@@ -1,6 +1,10 @@
 import './src/format/autoRules.test.ts';
 import './src/format/collisionLayers.test.ts';
+import './src/format/project.test.ts';
+import './src/format/localization.test.ts';
 import './src/runtime/grid.test.ts';
+import './src/runtime/level.test.ts';
+import './src/vite/plugin.test.ts';
 import './src/editor/render/paletteRemap.test.ts';
 import './src/editor/render/images.test.ts';
 import './src/editor/state/download.test.ts';

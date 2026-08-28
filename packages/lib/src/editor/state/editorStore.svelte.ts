@@ -19,10 +19,12 @@ import {
 	type SvTileset
 } from '../../format/types';
 import { collectLocalizableStrings, emptyLocalization } from '../../format/localization';
+import { assertProject } from '../../format/project';
 import {
 	allocUid,
 	makeAutoRuleGroup,
 	makeGroupFromPreset,
+	emptyProject,
 	makeLayerDef,
 	makeLayerInstance,
 	makeLevel,
@@ -77,6 +79,13 @@ export interface TileBrush {
 const HISTORY_LIMIT = 200;
 /** Overridden by `mountEditor({ projectPath })`; empty means "start from a blank project". */
 const DEFAULT_PROJECT_PATH = '';
+const RECOVERY_PREFIX = 'pixi-vania:recovery:';
+
+interface RecoverySnapshot {
+	version: 1;
+	updatedAt: number;
+	project: SvLevelProject;
+}
 
 class EditorStore {
 	project = $state<SvLevelProject | null>(null);
@@ -113,7 +122,12 @@ class EditorStore {
 	historyIndex = $state(0);
 	private strokeActive = false;
 	private strokeLabel = '';
+	private strokeBefore = '';
 	private nextHistoryId = 0;
+	private savedSerialised = '';
+	private loadGeneration = 0;
+	private saveGeneration = 0;
+	private saveChain: Promise<void> = Promise.resolve();
 
 	get canUndo(): boolean {
 		return this.historyIndex > 0;
@@ -148,30 +162,62 @@ class EditorStore {
 		}
 	}
 
-	async load(path = this.projectPath): Promise<void> {
+	async load(path = this.projectPath): Promise<boolean> {
+		if (
+			this.project &&
+			this.dirty &&
+			path !== this.projectPath &&
+			typeof confirm === 'function' &&
+			!confirm('Discard unsaved changes and open another project?')
+		) return false;
+		const generation = ++this.loadGeneration;
 		this.loading = true;
 		this.status = `Loading ${path}…`;
 		try {
-			this.open(await loadProject(path), path);
-			this.status = `Loaded ${path}`;
+			const project = await loadProject(path);
+			if (generation !== this.loadGeneration) return false;
+			this.open(project, path, false);
+			const recovery = this.readRecovery(path);
+			if (
+				recovery &&
+				this.serialise(recovery.project) !== this.savedSerialised &&
+				typeof confirm === 'function' &&
+				confirm(`Restore local recovery from ${new Date(recovery.updatedAt).toLocaleString()}?`)
+			) {
+				this.project = assertProject(recovery.project, 'local recovery');
+				this.resetHistory('Restore local recovery');
+				this.refreshDirty();
+				this.revision++;
+				this.status = `Recovered unsaved changes for ${path}`;
+			} else {
+				if (recovery) this.clearRecovery(path);
+				this.status = `Loaded ${path}`;
+			}
+			return true;
 		} catch (e) {
-			this.status = `Load failed: ${(e as Error).message}`;
+			if (generation === this.loadGeneration) this.status = `Load failed: ${(e as Error).message}`;
+			return false;
 		} finally {
-			this.loading = false;
+			if (generation === this.loadGeneration) this.loading = false;
 		}
 	}
 
 	/** Adopt an in-memory project (also the tail of `load`). Resets history and selection. */
-	open(project: SvLevelProject, path = this.projectPath): void {
-		project.autoRuleGroups ??= [];
-		project.autoRulePresets ??= [];
-		project.entities ??= [];
-		this.project = project;
+	open(project: SvLevelProject, path = this.projectPath, cancelPendingLoad = true): void {
+		// Validate/migrate on a detached copy before committing any live editor state.
+		const next = assertProject(project, path || 'project');
+		const currentLevelUid = next.levels[0]?.uid ?? -1;
+		const layers = next.layers ?? [];
+		const paintable = layers.find((l) => l.type === 'IdGrid' || l.type === 'Tiles');
+		const activeLayerUid = (paintable ?? layers[0])?.uid ?? -1;
+		if (cancelPendingLoad) this.loadGeneration++;
+		this.project = next;
 		this.projectPath = path;
 		this.resetHistory('Open project');
+		this.savedSerialised = this.serialise(next);
 		this.dirty = false;
-		this.currentLevelUid = project.levels[0]?.uid ?? -1;
-		this.activeLayerUid = this.defaultActiveLayer();
+		this.currentLevelUid = currentLevelUid;
+		this.activeLayerUid = activeLayerUid;
 		this.initBrush();
 		this.selectedEntityIids = [];
 		this.revision++;
@@ -192,10 +238,11 @@ class EditorStore {
 	/** Open a `.svlevel.json` picked from the user's disk. */
 	async importFile(file: File): Promise<void> {
 		try {
+			if (this.project && this.dirty && typeof confirm === 'function' && !confirm('Discard unsaved changes and import this project?')) return;
 			const data = JSON.parse(await file.text()) as SvLevelProject;
-			if (data.format !== 'svlevel') throw new Error('not a .svlevel file');
 			this.open(data, `/${file.name}`);
-			this.dirty = true;
+			this.savedSerialised = '';
+			this.refreshDirty();
 			this.status = `Imported ${file.name}`;
 		} catch (e) {
 			this.status = `Import failed: ${(e as Error).message}`;
@@ -204,13 +251,29 @@ class EditorStore {
 
 	async save(): Promise<void> {
 		if (!this.project) return;
+		if (!this.projectPath.endsWith('.svlevel.json')) {
+			this.status = 'Save As required: choose a path ending in .svlevel.json';
+			return;
+		}
+		const generation = ++this.saveGeneration;
+		const path = this.projectPath;
+		const snapshot = this.snapshot();
+		const serialised = this.serialise(snapshot);
 		this.status = 'Saving…';
+		const operation = this.saveChain.then(async () => {
+			await saveProject(path, snapshot);
+			if (generation === this.saveGeneration) {
+				this.savedSerialised = serialised;
+				this.refreshDirty();
+				if (!this.dirty) this.clearRecovery(path);
+			}
+		});
+		this.saveChain = operation.catch(() => {});
 		try {
-			await saveProject(this.projectPath, $state.snapshot(this.project) as SvLevelProject);
-			this.dirty = false;
-			this.status = `Saved ${this.projectPath}`;
+			await operation;
+			if (generation === this.saveGeneration) this.status = `Saved ${path}`;
 		} catch (e) {
-			this.status = `Save failed: ${(e as Error).message}`;
+			if (generation === this.saveGeneration) this.status = `Save failed: ${(e as Error).message}`;
 		}
 	}
 
@@ -231,6 +294,44 @@ class EditorStore {
 
 	private snapshot(): SvLevelProject {
 		return $state.snapshot(this.project!) as SvLevelProject;
+	}
+
+	private serialise(project: SvLevelProject): string {
+		return JSON.stringify(project);
+	}
+
+	private recoveryKey(path: string): string {
+		return RECOVERY_PREFIX + encodeURIComponent(path || this.project?.iid || 'untitled');
+	}
+
+	private readRecovery(path: string): RecoverySnapshot | null {
+		try {
+			const raw = localStorage.getItem(this.recoveryKey(path));
+			if (!raw) return null;
+			const value = JSON.parse(raw) as Partial<RecoverySnapshot>;
+			if (value.version !== 1 || typeof value.updatedAt !== 'number' || !value.project) return null;
+			return { version: 1, updatedAt: value.updatedAt, project: assertProject(value.project, 'local recovery') };
+		} catch {
+			return null;
+		}
+	}
+
+	private writeRecovery(): void {
+		if (!this.project || !this.dirty) return;
+		try {
+			const value: RecoverySnapshot = { version: 1, updatedAt: Date.now(), project: this.snapshot() };
+			localStorage.setItem(this.recoveryKey(this.projectPath), JSON.stringify(value));
+		} catch {
+			// Storage may be disabled or full; document editing must continue normally.
+		}
+	}
+
+	private clearRecovery(path: string): void {
+		try { localStorage.removeItem(this.recoveryKey(path)); } catch { /* unavailable storage */ }
+	}
+
+	private refreshDirty(): void {
+		this.dirty = !!this.project && this.serialise(this.snapshot()) !== this.savedSerialised;
 	}
 
 	/** Reset the timeline to a single checkpoint for the freshly-loaded document. */
@@ -262,14 +363,22 @@ class EditorStore {
 
 	/** Mark content changed + request a redraw. */
 	touch(): void {
-		this.dirty = true;
+		this.refreshDirty();
+		this.writeRecovery();
+		this.revision++;
+	}
+
+	/** Request a render after cache/UI changes without treating it as document content. */
+	redraw(): void {
 		this.revision++;
 	}
 
 	/** Run a discrete, undoable mutation, recording it under `label`. */
 	commit(label: string, fn: () => void): void {
 		if (!this.project) return;
+		const before = this.serialise(this.snapshot());
 		fn();
+		if (before === this.serialise(this.snapshot())) return;
 		this.pushHistory(label);
 		this.touch();
 	}
@@ -279,13 +388,24 @@ class EditorStore {
 		if (this.strokeActive) return;
 		this.strokeActive = true;
 		this.strokeLabel = label;
+		this.strokeBefore = this.project ? this.serialise(this.snapshot()) : '';
 	}
 
 	endStroke(): void {
 		if (!this.strokeActive) return;
 		this.strokeActive = false;
+		if (!this.project || this.strokeBefore === this.serialise(this.snapshot())) return;
 		this.pushHistory(this.strokeLabel);
 		this.touch();
+	}
+
+	cancelStroke(): void {
+		if (!this.strokeActive) return;
+		this.strokeActive = false;
+		if (this.strokeBefore) this.project = JSON.parse(this.strokeBefore) as SvLevelProject;
+		this.clampSelections();
+		this.refreshDirty();
+		this.revision++;
 	}
 
 	private restore(index: number): void {
@@ -311,7 +431,29 @@ class EditorStore {
 
 	private afterHistorySwap(): void {
 		this.clampSelections();
-		this.dirty = true;
+		this.refreshDirty();
+		this.writeRecovery();
+		this.revision++;
+	}
+
+	/** Drop document, async generations, history, selection and caches between mounts. */
+	reset(): void {
+		this.loadGeneration++;
+		this.saveGeneration++;
+		this.project = null;
+		this.projectPath = DEFAULT_PROJECT_PATH;
+		this.availableProjects = [];
+		this.states = [];
+		this.historyEntries = [];
+		this.historyIndex = 0;
+		this.strokeActive = false;
+		this.savedSerialised = '';
+		this.dirty = false;
+		this.status = '';
+		this.loading = false;
+		this.currentLevelUid = -1;
+		this.activeLayerUid = -1;
+		this.selectedEntityIids = [];
 		this.revision++;
 	}
 
@@ -332,6 +474,14 @@ class EditorStore {
 
 	setTool(t: EditorTool): void {
 		this.tool = t;
+	}
+
+	newProject(): void {
+		if (this.project && this.dirty && typeof confirm === 'function' && !confirm('Discard unsaved changes and create a new project?')) return;
+		this.open(emptyProject(), '');
+		this.savedSerialised = '';
+		this.refreshDirty();
+		this.status = 'New project — choose a Save As path';
 	}
 
 	setActiveLayer(uid: number): void {
@@ -477,10 +627,21 @@ class EditorStore {
 	deleteLayerDef(uid: number): void {
 		const p = this.project;
 		if (!p || p.layers.length <= 1) return;
+		const layer = p.layers.find((item) => item.uid === uid);
+		const dependents = p.layers.filter((item) => item.autoSourceLayerDefUid === uid).length;
+		const populated = p.levels.reduce((count, level) => {
+			const instance = level.layers.find((item) => item.layerDefUid === uid);
+			return count + (instance && (instance.idGrid.some(Boolean) || instance.gridTiles.length || instance.entities.length) ? 1 : 0);
+		}, 0);
+		if (typeof confirm === 'function' && !confirm(`Delete layer "${layer?.identifier ?? uid}"? ${populated} populated level instance(s) will be removed and ${dependents} auto-source reference(s) cleared.`)) return;
 		this.commit('Delete layer', () => {
 			p.layers = p.layers.filter((l) => l.uid !== uid);
+			for (const def of p.layers) {
+				if (def.autoSourceLayerDefUid === uid) def.autoSourceLayerDefUid = null;
+			}
 			for (const level of p.levels)
 				level.layers = level.layers.filter((li) => li.layerDefUid !== uid);
+			recomputeAllAutoTilesAllLevels(p);
 			if (this.activeLayerUid === uid) this.activeLayerUid = this.defaultActiveLayer();
 		});
 	}
@@ -543,8 +704,27 @@ class EditorStore {
 	deleteRuleGroup(uid: number): void {
 		const p = this.project;
 		if (!p) return;
+		const name = p.autoRuleGroups.find((group) => group.uid === uid)?.name;
+		if (!name) return;
+		let cells = 0;
+		let patterns = 0;
+		for (const level of p.levels) for (const layer of level.layers) if (layer.type === 'IdGrid')
+			cells += layer.idGrid.filter((cell) => cell === name).length;
+		for (const group of p.autoRuleGroups) for (const rule of group.rules)
+			patterns += rule.pattern.filter((cell) => cell === name || cell === `!${name}`).length;
+		if (typeof confirm === 'function' && !confirm(`Delete rule group "${name}"? ${cells} painted cell(s) and ${patterns} rule reference(s) will be cleared.`)) return;
 		this.editGroups('Delete rule group', () => {
+			const removed = p.autoRuleGroups.find((g) => g.uid === uid)?.name;
 			p.autoRuleGroups = p.autoRuleGroups.filter((g) => g.uid !== uid);
+			if (!removed) return;
+			for (const level of p.levels) for (const layer of level.layers) {
+				if (layer.type === 'IdGrid') layer.idGrid = layer.idGrid.map((cell) => cell === removed ? '' : cell);
+			}
+			for (const group of p.autoRuleGroups) for (const rule of group.rules) {
+				rule.pattern = rule.pattern.map((cell) => cell === removed || cell === `!${removed}` ? '' : cell);
+				if (rule.outOfBoundsValue === removed) rule.outOfBoundsValue = null;
+			}
+			if (this.selectedId === removed) this.selectedId = p.autoRuleGroups[0]?.name ?? '';
 		});
 	}
 

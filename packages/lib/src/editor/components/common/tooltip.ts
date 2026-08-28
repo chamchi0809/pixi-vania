@@ -38,6 +38,19 @@ export function showTip(text: string, anchor: DOMRect): Tip {
 export function tooltip(node: HTMLElement, text: string) {
 	let tip: Tip | null = null;
 	let current = text;
+	const suppliedLabel = node.hasAttribute('aria-label') || node.hasAttribute('aria-labelledby');
+	let actionLabel = false;
+	const syncAccessibleName = () => {
+		if (suppliedLabel || node.textContent?.trim()) return;
+		if (current) {
+			node.setAttribute('aria-label', current);
+			actionLabel = true;
+		} else if (actionLabel) {
+			node.removeAttribute('aria-label');
+			actionLabel = false;
+		}
+	};
+	syncAccessibleName();
 
 	function show() {
 		if (!current || tip) return;
@@ -56,6 +69,7 @@ export function tooltip(node: HTMLElement, text: string) {
 	return {
 		update(next: string) {
 			current = next;
+			syncAccessibleName();
 			if (next) tip?.update(next, node.getBoundingClientRect());
 			else hide();
 		},
@@ -64,6 +78,7 @@ export function tooltip(node: HTMLElement, text: string) {
 			node.removeEventListener('pointerenter', show);
 			node.removeEventListener('pointerleave', hide);
 			node.removeEventListener('pointerdown', hide);
+			if (actionLabel) node.removeAttribute('aria-label');
 		}
 	};
 }

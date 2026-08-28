@@ -469,8 +469,8 @@
 		},
 		{
 			"uid": 27,
-			"identifier": "Mine_Tileset_1B_16",
-			"relPath": "../Mine_Tileset_1B_16.palette.png",
+			"identifier": "Demo_Template_Tileset_16",
+			"relPath": "../0_Template_Tileset_16.png",
 			"pxWid": 96,
 			"pxHei": 64,
 			"tileGridSize": 16,
