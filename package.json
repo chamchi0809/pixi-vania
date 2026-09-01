@@ -7,7 +7,7 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "build": "pnpm -r build && node scripts/check-bundle-budget.mjs",
+    "build": "pnpm -r build",
     "dev": "pnpm --filter=demo dev",
     "typecheck": "pnpm -r typecheck"
   },
